@@ -102,6 +102,9 @@ export default function App() {
         <div className="sidebar__brand">
           <Link2 size={20} color="var(--accent)" />
           {t('nav.appTitle')}
+          <span style={{ color: 'var(--danger)', fontSize: 13, fontWeight: 600, marginLeft: 6 }}>
+            · GreenPool
+          </span>
         </div>
         <nav className="sidebar__nav">{renderNav(MAIN_NAV)}</nav>
         <div className="sidebar__spacer" />

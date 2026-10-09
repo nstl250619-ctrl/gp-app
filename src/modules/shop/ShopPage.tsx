@@ -39,6 +39,16 @@ export default function ShopPage({ onNavigate }: PageProps) {
         </button>
         <span className="shop-toolbar__title">{t('nav.shop')}</span>
         <span className="muted small">· {t('shop.domain')}</span>
+        <span
+          style={{
+            marginLeft: 'var(--space-4)',
+            color: 'var(--danger)',
+            fontWeight: 600,
+            fontSize: 14,
+          }}
+        >
+          {t('shop.buyHint')}
+        </span>
         <span className="shop-toolbar__spacer" />
         <button type="button" className="btn" onClick={() => onNavigate('redeem')}>
           <Ticket size={15} />

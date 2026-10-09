@@ -439,11 +439,23 @@ body {
 /* ---------- 记录列表 ---------- */
 .record-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: var(--space-3);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
   font-size: 14px;
+}
+
+/* 长标签换行时左列顶部对齐，右侧状态/账号不挤压 */
+.record-row > .muted:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.record-row__meta {
+  flex-shrink: 0;
+  text-align: right;
 }
 
 .record-row:last-child {

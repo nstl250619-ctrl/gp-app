@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, Info, Ticket, Wallet } from 'lucide-react';
+import { ExternalLink, Info, Wallet } from 'lucide-react';
 import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { QuotaSummary, ShopStatus, WalletSummary } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
@@ -67,10 +67,6 @@ export default function WalletPage({ onNavigate }: PageProps) {
         <div className="card__desc">{t('wallet.gpDesc')}</div>
         {shop?.ready && <div className="hint" style={{ margin: 'var(--space-2) 0 0' }}>{t('wallet.payInCny')}</div>}
         <div className="card__foot" style={{ gap: 'var(--space-3)' }}>
-          <button type="button" className="link-btn" onClick={() => onNavigate('redeem')}>
-            <Ticket size={13} style={{ display: 'inline', marginRight: 4, verticalAlign: -2 }} />
-            {t('wallet.goRedeem')}
-          </button>
           <button type="button" className="link-btn" onClick={openShop}>
             <ExternalLink size={13} style={{ display: 'inline', marginRight: 4, verticalAlign: -2 }} />
             {t('wallet.openShop')}
