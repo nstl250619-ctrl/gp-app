@@ -27,6 +27,7 @@ export const zh = {
     refresh: '刷新',
     copy: '复制',
     copied: '已复制',
+    retry: '重试',
     yes: '是',
     no: '否',
     on: '开',

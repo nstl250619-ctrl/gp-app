@@ -14,9 +14,12 @@ export default function OverviewPage({ onNavigate }: PageProps) {
   const [probe, setProbe] = useState<InstanceCapability | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
   const [, forceTick] = useState(0);
+  // 密钥模块刷新信号：页头「刷新」时 +1（修：密钥卡失败后无重试路径）
+  const [keyRefresh, setKeyRefresh] = useState(0);
 
   const load = useCallback(() => {
     setRefreshedAt(new Date());
+    setKeyRefresh((k) => k + 1);
     invokeCommand<AppStatus>('app.status', {}).then(setApp).catch(() => {});
     invokeCommand<DetectResult[]>('install.detect', {})
       .then((list) => setDetect(list[0] ?? null))
@@ -52,7 +55,7 @@ export default function OverviewPage({ onNavigate }: PageProps) {
       <div className="overview-grid">
         <AccountModule account={app} onRefresh={load} />
 
-        <KeyModule account={app} onRefresh={load} />
+        <KeyModule account={app} onRefresh={load} refreshKey={keyRefresh} />
 
         <div className="card">
           <div className="card__head">

@@ -1,6 +1,6 @@
 [package]
 name = "greenpool"
-version = "0.1.0"
+version = "0.1.1"
 description = "绿池 · GreenPool（GP）—— 一键打通中转站配置"
 edition = "2021"
 rust-version = "1.88"

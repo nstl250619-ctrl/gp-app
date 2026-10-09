@@ -28,6 +28,7 @@ impl NewApiClient {
 
     fn http(&self) -> reqwest::Client {
         reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10)) // 建连快速失败，别让用户干等 30s
             .timeout(Duration::from_secs(30))
             .build()
             .expect("failed to build http client")

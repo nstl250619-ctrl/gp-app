@@ -8,9 +8,11 @@ import { t } from '@/i18n';
 interface Props {
   account: AppStatus | null;
   onRefresh: () => void;
+  /** parent refresh signal: bumped by the header refresh button to re-pull the key list */
+  refreshKey: number;
 }
 
-export default function KeyModule({ account, onRefresh }: Props) {
+export default function KeyModule({ account, onRefresh, refreshKey }: Props) {
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -18,6 +20,7 @@ export default function KeyModule({ account, onRefresh }: Props) {
   const autoTried = useRef(false);
 
   const load = useCallback(() => {
+    setMsg(null); // clear stale error before reloading
     invokeCommand<KeyItem[]>('account.listKeys', {})
       .then(setKeys)
       .catch((e) => setMsg(errorMessage(e)));
@@ -29,7 +32,7 @@ export default function KeyModule({ account, onRefresh }: Props) {
       return;
     }
     load();
-  }, [account?.loggedIn, load]);
+  }, [account?.loggedIn, refreshKey, load]);
 
   // 自动规则（只试一次）：无可用 key → 自动生成并选中；有 key 但未选 → 选中第一个启用的
   useEffect(() => {
@@ -117,7 +120,12 @@ export default function KeyModule({ account, onRefresh }: Props) {
         </>
       )}
 
-      {msg && <div className="error-text" style={{ marginTop: 'var(--space-2)' }}>{msg}</div>}
+      {msg && (
+        <div style={{ marginTop: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <span className="error-text">{msg}</span>
+          <button type="button" className="link-btn" onClick={load}>{t('common.retry')}</button>
+        </div>
+      )}
     </div>
   );
 }
