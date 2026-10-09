@@ -15,7 +15,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest]
+        include:
+          - platform: windows-latest
+            args: '--bundles msi,nsis'
+          - platform: macos-latest
+            args: '--bundles app,dmg'
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -41,6 +45,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
+          args: ${{ matrix.args }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}
           releaseName: 'GreenPool ${{ github.ref_type == ''tag'' && github.ref_name || ''v0.1.0'' }}'
           releaseBody: '见提交历史'
