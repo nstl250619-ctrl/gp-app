@@ -44,5 +44,5 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}
           releaseName: 'GreenPool ${{ github.ref_type == ''tag'' && github.ref_name || ''v0.1.0'' }}'
           releaseBody: '见提交历史'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
