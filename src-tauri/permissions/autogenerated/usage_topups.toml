@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-usage-topups"
+description = "Enables the usage_topups command without any pre-configured scope."
+commands.allow = ["usage_topups"]
+
+[[permission]]
+identifier = "deny-usage-topups"
+description = "Denies the usage_topups command without any pre-configured scope."
+commands.deny = ["usage_topups"]

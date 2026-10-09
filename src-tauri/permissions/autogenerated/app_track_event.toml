@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-track-event"
+description = "Enables the app_track_event command without any pre-configured scope."
+commands.allow = ["app_track_event"]
+
+[[permission]]
+identifier = "deny-app-track-event"
+description = "Denies the app_track_event command without any pre-configured scope."
+commands.deny = ["app_track_event"]

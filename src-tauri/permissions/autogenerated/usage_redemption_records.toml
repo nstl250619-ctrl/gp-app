@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-usage-redemption-records"
+description = "Enables the usage_redemption_records command without any pre-configured scope."
+commands.allow = ["usage_redemption_records"]
+
+[[permission]]
+identifier = "deny-usage-redemption-records"
+description = "Denies the usage_redemption_records command without any pre-configured scope."
+commands.deny = ["usage_redemption_records"]

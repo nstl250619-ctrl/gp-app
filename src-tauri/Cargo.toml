@@ -1,0 +1,51 @@
+[package]
+name = "greenpool"
+version = "0.1.0"
+description = "绿池 · GreenPool（GP）—— 一键打通中转站配置"
+edition = "2021"
+rust-version = "1.88"
+
+[lib]
+name = "greenpool_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+thiserror = "=2.0.21"
+log = "=0.4.34"
+
+tauri-plugin-log = "=2.10.0"
+tauri-plugin-single-instance = "=2.5.2"
+tauri-plugin-opener = "=2.7.0"
+
+reqwest = { version = "=0.13.5", default-features = false, features = [
+    "json",
+    "query",
+    "rustls",
+    "gzip",
+] }
+keyring = { version = "=3.6.3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+tempfile = "=3.27.0"
+sha2 = "=0.11.0"
+uuid = { version = "=1.27.0", features = ["v4"] }
+chrono = "=0.4.45"
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "macros", "time"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+# 注：reqwest 0.13 起 TLS feature 名是 rustls（不是 rustls-tls），上方已用正确名。
+# tauri-plugin-updater / tauri-plugin-decoration 为二期/后续，骨架期先不引入。
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-detect"
+description = "Enables the install_detect command without any pre-configured scope."
+commands.allow = ["install_detect"]
+
+[[permission]]
+identifier = "deny-install-detect"
+description = "Denies the install_detect command without any pre-configured scope."
+commands.deny = ["install_detect"]

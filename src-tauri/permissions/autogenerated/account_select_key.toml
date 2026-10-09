@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-account-select-key"
+description = "Enables the account_select_key command without any pre-configured scope."
+commands.allow = ["account_select_key"]
+
+[[permission]]
+identifier = "deny-account-select-key"
+description = "Denies the account_select_key command without any pre-configured scope."
+commands.deny = ["account_select_key"]

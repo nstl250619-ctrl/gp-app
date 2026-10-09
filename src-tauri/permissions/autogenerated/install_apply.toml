@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-apply"
+description = "Enables the install_apply command without any pre-configured scope."
+commands.allow = ["install_apply"]
+
+[[permission]]
+identifier = "deny-install-apply"
+description = "Denies the install_apply command without any pre-configured scope."
+commands.deny = ["install_apply"]

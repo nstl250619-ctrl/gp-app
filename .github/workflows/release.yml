@@ -1,0 +1,48 @@
+name: release
+
+# 打 tag（v*）或手动触发都会构建并发布带签名更新的 GitHub Release。
+# 依赖两个仓库 secret（Settings → Secrets and variables → Actions）：
+#   TAURI_SIGNING_PRIVATE_KEY : 本地 `.tauri/update.key` 的完整内容（多行 base64）
+#   GITHUB_TOKEN              : 由 GitHub 自动提供，无需手动设置
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: build & release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}
+          releaseName: 'GreenPool ${{ github.ref_type == ''tag'' && github.ref_name || ''v0.1.0'' }}'
+          releaseBody: '见提交历史'
+          releaseDraft: true
+          prerelease: false

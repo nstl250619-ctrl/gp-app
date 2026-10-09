@@ -1,0 +1,31 @@
+/* 设计令牌（§15.1）。骨架期只落已用到的 Token，其余随界面逐步补齐。 */
+:root {
+  /* 品牌色与语义色分离（§15.1） */
+  --bg: #F6F7F9;
+  --surface: #FFFFFF;
+  --fg: #16191F;
+  --muted: #5B6472;
+  --border: #E2E5EA;
+
+  --accent: #0B6FA4;            /* 唯一品牌强调色：线上动作 */
+  --accent-on: #FFFFFF;
+  --signal-local-write: #B45309; /* 第二信号色：本机写入 */
+
+  --success: #15803D;
+  --danger: #B42318;
+  --warn: #B45309;
+  --success-bg: #F0FDF4;
+  --danger-bg: #FEF2F2;
+
+  /* 间距 / 圆角 / 布局 */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 40px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --titlebar-height: 40px;
+  --sidebar-width: 236px;
+  --statusbar-height: 32px;
+}

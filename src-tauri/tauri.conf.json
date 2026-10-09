@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GreenPool",
+  "version": "0.1.0",
+  "identifier": "cn.greenpool.gp",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "绿池",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 520,
+        "resizable": true,
+        "visible": true,
+        "backgroundColor": "#F6F7F9",
+        "decorations": true,
+        "center": true,
+        "focus": true,
+        "maximized": false,
+        "alwaysOnTop": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.greenpool.cn https://shop.greenpool.cn; frame-src 'self' https://shop.greenpool.cn",
+      "devCsp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "category": "Utility",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg0RUNEODgyNkNCMDRDMDEKUldRQlRMQnNndGpzaEdBUTJJVS9VdmZESTlmbVlkdVRDY0I3d3ExR0xMN2RKWkxXanR4aHo1eUQK",
+      "endpoints": [
+        "https://github.com/nstl250619-ctrl/greenpool/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-account-setup-key"
+description = "Enables the account_setup_key command without any pre-configured scope."
+commands.allow = ["account_setup_key"]
+
+[[permission]]
+identifier = "deny-account-setup-key"
+description = "Denies the account_setup_key command without any pre-configured scope."
+commands.deny = ["account_setup_key"]

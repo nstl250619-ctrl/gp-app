@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shop-send-bind-code"
+description = "Enables the shop_send_bind_code command without any pre-configured scope."
+commands.allow = ["shop_send_bind_code"]
+
+[[permission]]
+identifier = "deny-shop-send-bind-code"
+description = "Denies the shop_send_bind_code command without any pre-configured scope."
+commands.deny = ["shop_send_bind_code"]
