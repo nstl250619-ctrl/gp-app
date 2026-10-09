@@ -9,6 +9,7 @@
 
   --accent: #0B6FA4;            /* 唯一品牌强调色：线上动作 */
   --accent-on: #FFFFFF;
+  --brand-green: #22C55E;       /* 品牌浅绿：侧栏 GreenPool 标注 */
   --signal-local-write: #B45309; /* 第二信号色：本机写入 */
 
   --success: #15803D;
