@@ -72,15 +72,13 @@ pub fn resolve_related(model_ids: &[String]) -> (RelatedModelsStatement, Vec<Str
 }
 
 /// 按固定结构构造一条模型条目（§11.2 逐字段裁决：name=GP / vendor=Custom / useCustomProtocol=false
-/// / maxTokens=1_000_000 / supportsReasoning 显式 true / reasoning 默认开启可关）。
+/// / maxTokens=1_000_000 / supportsReasoning 显式 true / onlyReasoning=true 默认开启思考、档位 high）。
 pub fn build_model_entry(
     input: &WriteInput,
     seed: &ModelSeed,
     related: &RelatedModelsStatement,
 ) -> Value {
     let id = seed.id.trim();
-    // 逐模型思考档位（与 EP 系列对齐；未知模型走统一三档兜底）
-    let (default_effort, supported_efforts) = config::reasoning_effort_for(id);
     let related_value = match (&related.lite, &related.reasoning) {
         (Some(lite), Some(reasoning)) => json!({ "lite": lite, "reasoning": reasoning }),
         (Some(lite), None) => json!({ "lite": lite }),
@@ -100,10 +98,10 @@ pub fn build_model_entry(
         "supportsImages": seed.supports_images,
         "supportsReasoning": seed.supports_reasoning,
         "useCustomProtocol": config::MANAGED_MODEL_USE_CUSTOM_PROTOCOL,
+        "onlyReasoning": config::REASONING_ONLY_REASONING,
         "reasoning": {
-            "canDisableThinking": config::REASONING_CAN_DISABLE_THINKING,
-            "defaultEffort": default_effort,
-            "supportedEfforts": supported_efforts,
+            "defaultEffort": config::REASONING_DEFAULT_EFFORT,
+            "supportedEfforts": config::REASONING_SUPPORTED_EFFORTS,
         },
         "relatedModels": related_value,
     })
@@ -147,9 +145,9 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    /// 回归锁：GP 条目思考档位必须与 EP 系列逐模型对齐（2026-10-09 产品裁决）。
+    /// 回归锁：GP 条目默认开启思考（onlyReasoning=true）+ 档位统一 high（2026-10-10 产品裁决）。
     #[test]
-    fn model_entry_uses_per_model_effort_table() {
+    fn model_entry_defaults_reasoning_on_with_high_effort() {
         let input = WriteInput {
             base_url: "https://api.greenpool.cn".into(),
             api_key: "k".into(),
@@ -163,22 +161,15 @@ mod tests {
             supports_reasoning: true,
         };
 
-        // fast-model：EP 实测 medium + [medium]
+        // 任意模型：默认开启思考 + high + 三档
         let e = build_model_entry(&input, &seed("fast-model"), &related);
-        assert_eq!(e["reasoning"]["defaultEffort"], "medium");
-        assert_eq!(e["reasoning"]["supportedEfforts"], serde_json::json!(["medium"]));
-
-        // deepseek-v4-pro：EP 实测 high + [high, xhigh]
-        let e = build_model_entry(&input, &seed("deepseek-v4-pro"), &related);
-        assert_eq!(e["reasoning"]["defaultEffort"], "high");
-        assert_eq!(e["reasoning"]["supportedEfforts"], serde_json::json!(["high", "xhigh"]));
-
-        // 未知模型：回退统一三档 + high
-        let e = build_model_entry(&input, &seed("future-model-9"), &related);
+        assert_eq!(e["onlyReasoning"], true);
         assert_eq!(e["reasoning"]["defaultEffort"], "high");
         assert_eq!(
             e["reasoning"]["supportedEfforts"],
             serde_json::json!(["low", "high", "xhigh"])
         );
+        // 不再有「可关闭思考」字段（与 onlyReasoning 语义冲突）
+        assert!(e["reasoning"].get("canDisableThinking").is_none());
     }
 }

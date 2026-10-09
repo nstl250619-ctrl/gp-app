@@ -47,38 +47,11 @@ pub const MANAGED_MODEL_VENDOR: &str = "Custom"; // D-13
 pub const MANAGED_MODEL_USE_CUSTOM_PROTOCOL: bool = false; // D-13
 pub const MANAGED_MODEL_MAX_INPUT_TOKENS: u64 = 1_000_000; // D-13
 pub const MANAGED_MODEL_MAX_OUTPUT_TOKENS: u64 = 1_000_000; // D-13
-pub const REASONING_CAN_DISABLE_THINKING: bool = true; // D-11
-pub const REASONING_DEFAULT_EFFORT: &str = "high"; // D-11
+pub const REASONING_ONLY_REASONING: bool = true; // D-11: 默认开启思考模式（EP 系列同款，缺此字段客户端默认关闭）
+pub const REASONING_DEFAULT_EFFORT: &str = "high"; // D-11: 默认档位「高」
 /// 思考档位集合（2026-10-09：CodeBuddy 列表徽标读取 reasoning.supportedEfforts，
-/// 缺失则不显示思考模式 UI；defaultEffort 必须在集合内）。兜底用。
+/// 缺失则不显示思考模式 UI；defaultEffort 必须在集合内）。
 pub const REASONING_SUPPORTED_EFFORTS: &[&str] = &["low", "high", "xhigh"];
-
-/// 模型 → 思考档位映射（2026-10-09 产品裁决：与 EP 系列实测口径逐模型对齐）。
-/// (模型 id, 默认档位, 支持档位集合)。不在表内的模型走统一三档兜底。
-pub const REASONING_EFFORTS_BY_MODEL: &[(&str, &str, &[&str])] = &[
-    ("fast-model", "medium", &["medium"]),
-    ("balanced-model", "medium", &["medium"]),
-    ("deep-model", "medium", &["medium"]),
-    ("deepseek-v4.1-flash", "high", &["low", "high", "max"]),
-    ("deepseek-v4-pro", "high", &["high", "xhigh"]),
-    ("glm-5.3", "high", &["low", "high", "max"]),
-    ("glm-5.3-flash", "high", &["low", "high", "max"]),
-    ("glm-5.2", "high", &["high", "xhigh"]),
-    ("glm-5v-turbo", "medium", &["medium"]),
-    ("minimax-m3", "medium", &["medium"]),
-    ("kimi-k3-1", "high", &["low", "high", "xhigh"]),
-    ("kimi-k2.8-preview", "high", &["low", "high", "max"]),
-    ("kimi-k2.7", "medium", &["medium"]),
-];
-
-/// 按模型 id 查思考档位；未知模型回退统一三档 + high。
-pub fn reasoning_effort_for(model_id: &str) -> (&'static str, &'static [&'static str]) {
-    REASONING_EFFORTS_BY_MODEL
-        .iter()
-        .find(|(id, _, _)| *id == model_id)
-        .map(|(_, d, e)| (*d, *e))
-        .unwrap_or((REASONING_DEFAULT_EFFORT, REASONING_SUPPORTED_EFFORTS))
-}
 
 pub const WORKBUDDY_CONFIG_FILE: &str = "models.json";
 pub const WORKBUDDY_DIR_ENV: &str = "WORKBUDDY_CONFIG_DIR";
