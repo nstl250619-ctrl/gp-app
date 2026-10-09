@@ -53,24 +53,34 @@ fn write_input(model_ids: Vec<String>) -> AppResult<WriteInput> {
     Ok(WriteInput { base_url: config::DEFAULT_BASE_URL.into(), api_key, model_ids })
 }
 
-pub fn detect() -> AppResult<Vec<DetectResult>> {
-    adapters::all_adapters().iter().map(|a| a.detect()).collect()
+pub fn detect(data_dir: &PathBuf) -> AppResult<Vec<DetectResult>> {
+    let overrides = load_overrides(data_dir);
+    adapters::all_adapters()
+        .iter()
+        .map(|a| a.detect(override_of(&overrides, a.id()).as_deref()))
+        .collect()
 }
 
-pub fn plan(target: String, model_ids: Vec<String>) -> AppResult<InstallPlan> {
+pub fn plan(target: String, model_ids: Vec<String>, custom_path: Option<String>, data_dir: &PathBuf) -> AppResult<InstallPlan> {
     let ids = resolve_ids(model_ids);
     let input = write_input(ids.clone())?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
-    adapter.plan(&input, &seeds)
+    adapter.plan(&input, &seeds, resolve_custom(custom_path, data_dir, &target).as_deref())
 }
 
-fn apply_locked(target: String, model_ids: Vec<String>, data_dir: &PathBuf) -> AppResult<ApplyResult> {
+fn apply_locked(target: String, model_ids: Vec<String>, custom_path: Option<String>, data_dir: &PathBuf) -> AppResult<ApplyResult> {
     let ids = resolve_ids(model_ids);
     let input = write_input(ids.clone())?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
-    let result = adapter.apply(&input, &seeds)?;
+    let custom = resolve_custom(custom_path.clone(), data_dir, &target);
+    let result = adapter.apply(&input, &seeds, custom.as_deref())?;
+
+    // 用户手动指定过路径 → 持久化，detect/后续操作都指向它
+    if let Some(p) = custom {
+        save_override(data_dir, &target, &p.display().to_string())?;
+    }
 
     let record = InstallRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -91,11 +101,12 @@ pub async fn apply_with_verify(
     target: String,
     model_ids: Vec<String>,
     verify: bool,
+    custom_path: Option<String>,
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
     let mut result = {
         let _guard = lock()?;
-        apply_locked(target, model_ids.clone(), data_dir)?
+        apply_locked(target, model_ids.clone(), custom_path, data_dir)?
     };
 
     if verify && result.verify_ok {
@@ -140,8 +151,9 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
+            let overrides = load_overrides(data_dir);
             adapters::find_adapter(&rec.target)
-                .and_then(|a| a.detect().ok())
+                .and_then(|a| a.detect(override_of(&overrides, a.id()).as_deref()).ok())
                 .and_then(|d| d.path)
                 .map(PathBuf::from)
         })
@@ -191,4 +203,44 @@ fn append_record(data_dir: &PathBuf, record: InstallRecord) -> AppResult<()> {
     let mut records = load_records(data_dir)?;
     records.push(record);
     save_records(data_dir, &records)
+}
+
+// ---- 用户手动指定的配置路径（分身/重命名场景）：按 target 持久化到 path_overrides.json ----
+
+fn overrides_path(data_dir: &PathBuf) -> PathBuf {
+    data_dir.join("path_overrides.json")
+}
+
+fn load_overrides(data_dir: &PathBuf) -> std::collections::HashMap<String, String> {
+    std::fs::read_to_string(overrides_path(data_dir))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn override_of(overrides: &std::collections::HashMap<String, String>, target: &str) -> Option<PathBuf> {
+    overrides
+        .get(target)
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn save_override(data_dir: &PathBuf, target: &str, path: &str) -> AppResult<()> {
+    std::fs::create_dir_all(data_dir)?;
+    let mut m = load_overrides(data_dir);
+    m.insert(target.to_string(), path.to_string());
+    fs_atomic::atomic_write(&overrides_path(data_dir), &serde_json::to_string_pretty(&m)?)?;
+    Ok(())
+}
+
+/// 自定义路径解析优先级：命令参数（用户输入框当前值） > 持久化 override > None（自动探测）
+fn resolve_custom(custom_path: Option<String>, data_dir: &PathBuf, target: &str) -> Option<PathBuf> {
+    let from_arg = custom_path
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    from_arg.or_else(|| {
+        let overrides = load_overrides(data_dir);
+        override_of(&overrides, target)
+    })
 }

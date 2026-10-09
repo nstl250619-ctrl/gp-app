@@ -11,6 +11,16 @@ export function fmtCredits(usd: number): string {
   return c.toFixed(1);
 }
 
+// 余额卡：向下保留 2 位小数（宁可少显示，不虚报余额）。
+export function fmtUsdFloor2(usd: number): string {
+  return `$${(Math.floor(usd * 100) / 100).toFixed(2)}`;
+}
+
+// 已用卡：向上保留 2 位小数（宁可多计，不漏报消耗）。
+export function fmtUsdCeil2(usd: number): string {
+  return `$${(Math.ceil(usd * 100) / 100).toFixed(2)}`;
+}
+
 // 消耗积分：同上，但最低 0.1 积分（凡有消耗至少计 0.1）。
 export function fmtCreditsSpent(usd: number): string {
   if (usd <= 0) return '0.0';

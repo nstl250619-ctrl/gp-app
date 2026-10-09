@@ -39,7 +39,7 @@ pub async fn app_status() -> CommandResult<AppStatus> {
     // 修 M7：任一适配器探测到即算已找到（原先只看第一个）
     let target_detected = crate::adapters::all_adapters()
         .iter()
-        .any(|a| a.detect().map(|d| d.detected).unwrap_or(false));
+        .any(|a| a.detect(None).map(|d| d.detected).unwrap_or(false));
 
     CommandResult::ok(AppStatus {
         name: crate::config::APP_NAME.into(),

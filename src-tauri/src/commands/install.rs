@@ -8,13 +8,18 @@ use crate::services::{self, install::InstallRecord};
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn install_detect() -> CommandResult<Vec<DetectResult>> {
-    respond(services::install::detect())
+pub fn install_detect(state: State<AppState>) -> CommandResult<Vec<DetectResult>> {
+    respond(services::install::detect(&state.data_dir))
 }
 
 #[tauri::command]
-pub fn install_plan(target: String, model_ids: Vec<String>) -> CommandResult<InstallPlan> {
-    respond(services::install::plan(target, model_ids))
+pub fn install_plan(
+    state: State<AppState>,
+    target: String,
+    model_ids: Vec<String>,
+    custom_path: Option<String>,
+) -> CommandResult<InstallPlan> {
+    respond(services::install::plan(target, model_ids, custom_path, &state.data_dir))
 }
 
 #[tauri::command]
@@ -23,10 +28,13 @@ pub async fn install_apply(
     target: String,
     model_ids: Vec<String>,
     verify: bool,
+    custom_path: Option<String>,
 ) -> CommandResult<ApplyResult> {
     // async 命令不能持 State 跨 await，先取 owned 数据。
     let data_dir = app.state::<AppState>().data_dir.clone();
-    respond(services::install::apply_with_verify(target, model_ids, verify, &data_dir).await)
+    respond(
+        services::install::apply_with_verify(target, model_ids, verify, custom_path, &data_dir).await,
+    )
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 // 配置与用量：压缩配置卡（对照表数据全部来自真实计划）+ 用量统计 5 卡 + 用量明细（UsageDetail 组件）。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Info, Wand2, X } from 'lucide-react';
 import { errorMessage, invokeCommand } from '@/services/ipc';
 import type {
@@ -9,7 +9,7 @@ import type {
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
 import { formatRelative } from '@/utils/time';
-import { fmtCredits, fmtUsd } from '@/utils/fmt';
+import { fmtCredits, fmtUsdCeil2, fmtUsdFloor2 } from '@/utils/fmt';
 import UsageDetailSection, { rangeLabel, rangeTimestamps, type TimeRange } from './UsageDetail';
 
 type TabKey = 'workbuddy' | 'codebuddy' | 'openclaw' | 'hermes';
@@ -26,6 +26,10 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // 配置文件路径（用户可编辑：分身/重命名场景）；ref 供 load 稳定读取，避免 useCallback 循环
+  const [pathDraft, setPathDraft] = useState('');
+  const pathDraftRef = useRef('');
+  const pathDirty = useRef(false);
 
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [usage, setUsage] = useState<UsageDetail | null>(null);
@@ -33,9 +37,18 @@ export default function ConfigPage({ onNavigate }: PageProps) {
 
   const load = useCallback(() => {
     invokeCommand<DetectResult[]>('install.detect', {})
-      .then((list) => setDetect(list.find((d) => d.target === tab) ?? null))
+      .then((list) => {
+        const d = list.find((x) => x.target === tab) ?? null;
+        setDetect(d);
+        // 用户未手动编辑过路径时，输入框跟随自动定位/持久化 override 的值
+        if (!pathDirty.current) {
+          const p = d?.path ?? '';
+          pathDraftRef.current = p;
+          setPathDraft(p);
+        }
+      })
       .catch((e) => setMsg(errorMessage(e)));
-    invokeCommand<InstallPlan>('install.plan', { target: tab, modelIds: [] })
+    invokeCommand<InstallPlan>('install.plan', { target: tab, modelIds: [], customPath: pathDraftRef.current || undefined })
       .then(setPlan)
       .catch(() => setPlan(null));
     if (!probe) {
@@ -68,7 +81,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   useEffect(() => { loadUsage(timeRange); }, [timeRange, loadUsage]);
 
   const copyPath = async () => {
-    if (plan?.path) await navigator.clipboard.writeText(plan.path);
+    const p = pathDraft || plan?.path;
+    if (p) await navigator.clipboard.writeText(p);
   };
 
   const apply = async () => {
@@ -76,9 +90,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setMsg(null);
     setResult(null);
     try {
-      const r = await invokeCommand<ApplyResult>('install.apply', { target: tab, modelIds: [], verify: true });
+      const r = await invokeCommand<ApplyResult>('install.apply', {
+        target: tab, modelIds: [], verify: true, customPath: pathDraftRef.current || undefined,
+      });
       const ok = r.status === 'applied';
       setResult({ ok, text: ok ? t('config.applySuccess') : r.message });
+      pathDirty.current = false;
       load();
     } catch (e) {
       setResult({ ok: false, text: errorMessage(e) });
@@ -90,6 +107,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pickTab = (key: TabKey) => {
     setTab(key);
     setResult(null);
+    pathDirty.current = false;
     setMsg(!WRITABLE.has(key) ? t('config.tabUnavailable') : null);
   };
 
@@ -114,61 +132,74 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         ))}
       </div>
 
-      {detect?.detected && plan && (
+      {WRITABLE.has(tab) && !!(detect?.path || pathDraft) && (
         <div className="card">
-          {/* compressed layout: status badge + path + copy in one row */}
+          {/* status badge + editable path + copy in one row */}
           <div className="config-path-row">
-            <span className="status-tag status-tag--ok">
-              <Check size={14} color="var(--success)" />
-              {t('config.found')}
+            <span className={detect?.detected ? 'status-tag status-tag--ok' : 'status-tag'}>
+              <Check size={14} color={detect?.detected ? 'var(--success)' : 'var(--muted)'} />
+              {detect?.detected ? t('config.found') : t('config.notLocated')}
             </span>
-            <span className="path-chip">{plan.path}</span>
+            <input
+              className="input"
+              style={{ flex: 1 }}
+              value={pathDraft}
+              placeholder={t('config.pathPlaceholder')}
+              onChange={(e) => { pathDirty.current = true; pathDraftRef.current = e.target.value; setPathDraft(e.target.value); }}
+            />
             <button type="button" className="icon-btn" onClick={copyPath} title={t('common.copy')}>
               <Copy size={14} />
             </button>
           </div>
+          <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.pathEditableHint')}</div>
 
-          <div className="section-title">{t('config.willChange')}</div>
-          <table className="diff-table">
-            <tbody>
-              {rows().map((r) => (
-                <tr key={r.field}>
-                  <td className="diff-table__field">{r.field}</td>
-                  <td>
-                    <span className="diff-table__after">
-                      <span className="muted">→</span>
-                      <span className="diff-table__value">{r.value}</span>
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              <tr key="models">
-                <td className="diff-table__field">{t('config.rowModel')}</td>
-                <td>
-                  <span className="diff-table__after">
-                    <span className="muted">→</span>
-                    <span className="model-list">
-                      {(plan?.added ?? []).map((m, i) => (
-                        <span key={m}>
-                          {i > 0 && <span className="muted">{t('config.modelSep')}</span>}
-                          <span className="gp-prefix">GP:</span>
-                          <span>{m}</span>
+          {plan ? (
+            <>
+              <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.willChange')}</div>
+              <table className="diff-table">
+                <tbody>
+                  {rows().map((r) => (
+                    <tr key={r.field}>
+                      <td className="diff-table__field">{r.field}</td>
+                      <td>
+                        <span className="diff-table__after">
+                          <span className="muted">→</span>
+                          <span className="diff-table__value">{r.value}</span>
                         </span>
-                      ))}
-                    </span>
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          {plan && plan.added.length > 0 && (
-            <div className="model-note">
-              {plan.added.length} {t('config.modelPrefixNote')}
-            </div>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr key="models">
+                    <td className="diff-table__field">{t('config.rowModel')}</td>
+                    <td>
+                      <span className="diff-table__after">
+                        <span className="muted">→</span>
+                        <span className="model-list">
+                          {(plan?.added ?? []).map((m, i) => (
+                            <span key={m}>
+                              {i > 0 && <span className="muted">{t('config.modelSep')}</span>}
+                              <span className="gp-prefix">GP:</span>
+                              <span>{m}</span>
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {plan && plan.added.length > 0 && (
+                <div className="model-note">
+                  {plan.added.length} {t('config.modelPrefixNote')}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.needKeyFirst')}</p>
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={apply}>
+            <button type="button" className="btn btn-primary" disabled={busy || !pathDraft.trim()} onClick={apply}>
               <Wand2 size={15} />
               {t('config.applyBtn')}
             </button>
@@ -189,18 +220,6 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           {msg && <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{msg}</div>}
         </div>
       )}
-      {detect?.detected && !plan && (
-        <div className="card">
-          <div className="card__head">
-            <span className="status-tag status-tag--ok">
-              <Check size={14} color="var(--success)" />
-              {t('config.found')}
-            </span>
-            <span className="path-chip">{detect.path}</span>
-          </div>
-          <p className="muted">{t('config.needKeyFirst')}</p>
-        </div>
-      )}
 
       {/* ---- usage stats ---- */}
       <div className="section-title" style={{ marginTop: 'var(--space-6)' }}>{t('config.usageTitle')}</div>
@@ -215,14 +234,14 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       <div className="usage-grid">
         <div className="stat-card">
           <div className="stat-card__label">{t('config.statBalance')}</div>
-          <div className="stat-card__value">{quota ? fmtUsd(quota.remainingUsd) : '—'}</div>
+          <div className="stat-card__value">{quota ? fmtUsdFloor2(quota.remainingUsd) : '—'}</div>
           {quota && quota.remainingUsd < 0 && (
             <div className="stat-card__sub" style={{ color: 'var(--danger)' }}>{t('wallet.overdraft')}</div>
           )}
         </div>
         <div className="stat-card">
           <div className="stat-card__label">{t('config.statSpent')}</div>
-          <div className="stat-card__value">{quota ? fmtUsd(quota.usedUsd) : '—'}</div>
+          <div className="stat-card__value">{quota ? fmtUsdCeil2(quota.usedUsd) : '—'}</div>
           <div className="stat-card__sub">{quota?.username}</div>
         </div>
         <div className="stat-card">

@@ -265,6 +265,17 @@ impl NewApiClient {
         self.post_json("/api/user/topup", json!({ "key": code })).await
     }
 
+    /// 查兑换码有效期（GET /api/user/redemption/{id}，服务器补丁接口；校验 used_user_id 为本人）。
+    /// 接口未上线（404）或任何失败时返回 None，调用方优雅降级——绝不因它阻塞兑换记录展示。
+    pub async fn redemption_expired_time(&self, id: i64) -> Option<i64> {
+        let resp = self.get(&format!("/api/user/redemption/{}", id)).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let v: Value = resp.json().await.ok()?;
+        v.get("data")?.get("expired_time")?.as_i64()
+    }
+
     /// 当前用户最近充值记录（GET /api/user/topup/self）。
     pub async fn topup_records(&self) -> AppResult<Vec<super::types::TopUpRecord>> {
         let resp = self

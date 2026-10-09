@@ -109,6 +109,8 @@ export interface RedemptionRecord {
   createdAt: number;
   content: string;
   amountUsd: number | null;
+  /** 兑换码有效期（unix 秒；null=未知，0=长期有效） */
+  expiresAt?: number | null;
 }
 
 export interface TopUpRecord {

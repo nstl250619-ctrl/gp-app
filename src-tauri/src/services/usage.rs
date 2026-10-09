@@ -50,22 +50,38 @@ pub struct RedemptionRecord {
     pub content: String,
     /// 从 content 解析出的 USD 金额（解析失败为 None）
     pub amount_usd: Option<f64>,
+    /// 兑换码有效期（unix 秒；None=查询接口不可用；0=长期有效）
+    pub expires_at: Option<i64>,
 }
 
 /// 兑换记录：logs type=1（topup 类）。兑换码核销不写 top_ups 表（那是支付充值），
 /// 故从日志取，金额从 content 文本解析（＄X.XXXXXX，全角/半角 $ 均兼容）。
+/// 有效期：按 content 里的兑换码 ID 并发查用户侧补丁接口；接口未上线时优雅降级为 None。
 pub async fn redemption_records() -> AppResult<Vec<RedemptionRecord>> {
     let token = account::ensure_session().await?;
     let client = NewApiClient::with_token(config::DEFAULT_BASE_URL, &token);
     let (items, _total) = client.logs_by_type(1, 1, 20, 0, 0).await?;
-    Ok(items
-        .into_iter()
-        .filter(|l| !l.content.is_empty())
-        .map(|l| {
+    let mut handles = Vec::new();
+    for l in items.into_iter().filter(|l| !l.content.is_empty()) {
+        let c = client.clone();
+        handles.push(tokio::spawn(async move {
             let amount_usd = parse_amount_usd(&l.content);
-            RedemptionRecord { created_at: l.created_at, content: l.content, amount_usd }
-        })
-        .collect())
+            let rid = parse_redemption_id(&l.content);
+            let expires_at = match rid {
+                Some(id) => c.redemption_expired_time(id).await,
+                None => None,
+            };
+            RedemptionRecord { created_at: l.created_at, content: l.content, amount_usd, expires_at }
+        }));
+    }
+    let mut out = Vec::new();
+    for h in handles {
+        if let Ok(r) = h.await {
+            out.push(r);
+        }
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(out)
 }
 
 /// 从日志 content 解析 USD 金额（「＄0.001470」全角/半角 $ 均兼容，按 char_indices 处理宽度）
@@ -80,6 +96,32 @@ fn parse_amount_usd(content: &str) -> Option<f64> {
         }
     }
     None
+}
+
+/// 从日志 content 解析兑换码 ID（「…，兑换码ID 42」）
+fn parse_redemption_id(content: &str) -> Option<i64> {
+    let marker = "兑换码ID";
+    let idx = content.find(marker)?;
+    let rest = &content[idx + marker.len()..];
+    let num: String = rest
+        .chars()
+        .skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    num.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_redemption_id_extracts_number() {
+        assert_eq!(parse_redemption_id("通过兑换码充值 ＄10 额度，兑换码ID 42"), Some(42));
+        assert_eq!(parse_redemption_id("兑换码ID 7"), Some(7));
+        assert_eq!(parse_redemption_id("没有ID的日志"), None);
+        assert_eq!(parse_redemption_id("兑换码ID abc"), None);
+    }
 }
 
 /// 最近充值记录（来自站点，最多 10 条）。

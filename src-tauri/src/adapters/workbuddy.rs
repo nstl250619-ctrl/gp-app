@@ -21,8 +21,12 @@ pub struct ModelsJsonAdapter {
 }
 
 impl ModelsJsonAdapter {
-    fn existing_path(&self) -> Option<PathBuf> {
-        (self.candidates)().into_iter().find(|p| p.exists())
+    /// 用户手动指定（分身/重命名）优先；否则按候选路径探测存在的文件。
+    fn existing_path(&self, custom: Option<&Path>) -> Option<PathBuf> {
+        match custom {
+            Some(p) => Some(p.to_path_buf()),
+            None => (self.candidates)().into_iter().find(|p| p.exists()),
+        }
     }
 
     pub fn workbuddy() -> Self {
@@ -43,16 +47,21 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
         self.display
     }
 
-    fn detect(&self) -> AppResult<DetectResult> {
-        let path = self.existing_path();
+    fn detect(&self, custom_path: Option<&Path>) -> AppResult<DetectResult> {
+        let (path, detected) = match custom_path {
+            Some(p) => (Some(p.to_path_buf()), p.exists()),
+            None => {
+                let p = (self.candidates)().into_iter().find(|p| p.exists());
+                (p.clone(), p.is_some())
+            }
+        };
         let has_managed = match &path {
-            Some(p) => {
+            Some(p) if p.exists() => {
                 let raw = fs_atomic::read_string(p).unwrap_or_default();
                 normalize(&raw).models.iter().any(is_managed_entry)
             }
-            None => false,
+            _ => false,
         };
-        let detected = path.is_some();
         let path_str = path.as_ref().map(|p| p.display().to_string());
         Ok(DetectResult {
             target: self.target.into(),
@@ -63,8 +72,8 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
         })
     }
 
-    fn plan(&self, input: &WriteInput, seeds: &[ModelSeed]) -> AppResult<InstallPlan> {
-        let path = self.existing_path().ok_or(AppError::TargetNotFound)?;
+    fn plan(&self, input: &WriteInput, seeds: &[ModelSeed], custom_path: Option<&Path>) -> AppResult<InstallPlan> {
+        let path = self.existing_path(custom_path).ok_or(AppError::TargetNotFound)?;
         let raw = fs_atomic::read_string(&path)?;
         let current = normalize(&raw);
         let (related, warnings) = resolve_related(&input.model_ids);
@@ -117,8 +126,8 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
         })
     }
 
-    fn apply(&self, input: &WriteInput, seeds: &[ModelSeed]) -> AppResult<ApplyResult> {
-        let path = self.existing_path().ok_or(AppError::TargetNotFound)?;
+    fn apply(&self, input: &WriteInput, seeds: &[ModelSeed], custom_path: Option<&Path>) -> AppResult<ApplyResult> {
+        let path = self.existing_path(custom_path).ok_or(AppError::TargetNotFound)?;
         if let Some(parent) = path.parent() {
             if !parent.exists() {
                 return Err(AppError::TargetNotFound); // 禁止静默创建目录（§11.1）

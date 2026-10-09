@@ -98,6 +98,13 @@ export default function RedeemPage({ onNavigate }: PageProps) {
               + {r.amountUsd !== null ? fmtUsd(r.amountUsd) : ''}
             </span>
             <span className="record-row__meta">
+              <span>
+                {r.expiresAt === 0
+                  ? t('redeem.neverExpires')
+                  : r.expiresAt != null
+                    ? `${t('redeem.expiresAt')} ${formatUnix(r.expiresAt)}`
+                    : ''}
+              </span>
               <span>{formatUnix(r.createdAt)}</span>
             </span>
           </div>

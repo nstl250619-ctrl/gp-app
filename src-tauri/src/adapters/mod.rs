@@ -14,9 +14,10 @@ use types::{ApplyResult, DetectResult, InstallPlan, ModelSeed, WriteInput};
 pub trait ConfigAdapter: Send + Sync {
     fn id(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
-    fn detect(&self) -> AppResult<DetectResult>;
-    fn plan(&self, input: &WriteInput, seeds: &[ModelSeed]) -> AppResult<InstallPlan>;
-    fn apply(&self, input: &WriteInput, seeds: &[ModelSeed]) -> AppResult<ApplyResult>;
+    /// custom_path：用户手动指定的配置文件路径（分身/重命名场景），优先于自动探测。
+    fn detect(&self, custom_path: Option<&Path>) -> AppResult<DetectResult>;
+    fn plan(&self, input: &WriteInput, seeds: &[ModelSeed], custom_path: Option<&Path>) -> AppResult<InstallPlan>;
+    fn apply(&self, input: &WriteInput, seeds: &[ModelSeed], custom_path: Option<&Path>) -> AppResult<ApplyResult>;
     /// 按备份还原到指定目标路径（不重新探测，避免多版本/移动后写错文件）。
     fn rollback(&self, backup: &Path, target: &Path) -> AppResult<()>;
 }
