@@ -7,3 +7,8 @@ src-tauri/gen
 # 更新签名私钥（绝不能进仓库；CI 通过 TAURI_SIGNING_PRIVATE_KEY secret 注入）
 .tauri/update.key
 .env
+
+# 临时/原型/截图产物
+.playwright-cli/
+_model_select_mock.*
+model_mock.png
