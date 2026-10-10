@@ -11,6 +11,7 @@ import { t } from '@/i18n';
 import { formatRelative } from '@/utils/time';
 import { fmtCredits, fmtUsdCeil2, fmtUsdFloor2 } from '@/utils/fmt';
 import UsageDetailSection, { rangeLabel, rangeTimestamps, type TimeRange } from './UsageDetail';
+import ModelPicker from './ModelPicker';
 
 type TabKey = 'workbuddy' | 'codebuddy' | 'openclaw' | 'hermes';
 const TABS: TabKey[] = ['workbuddy', 'codebuddy', 'openclaw', 'hermes'];
@@ -30,10 +31,27 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [pathDraft, setPathDraft] = useState('');
   const pathDraftRef = useRef('');
   const pathDirty = useRef(false);
+  // 模型勾选：可用列表（账号在 new-api 实际可用）+ 已勾选 id；ref 供 load/apply 稳定读取
+  const [available, setAvailable] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const selectedRef = useRef<string[]>([]);
+  const modelsDirty = useRef(false);
 
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [usage, setUsage] = useState<UsageDetail | null>(null);
   const [usageMsg, setUsageMsg] = useState<string | null>(null);
+
+  const loadPlan = useCallback((ids: string[]) => {
+    if (ids.length === 0) {
+      setPlan(null);
+      return;
+    }
+    invokeCommand<InstallPlan>('install.plan', {
+      target: tab, modelIds: ids, customPath: pathDraftRef.current || undefined,
+    })
+      .then(setPlan)
+      .catch(() => setPlan(null));
+  }, [tab]);
 
   const load = useCallback(() => {
     invokeCommand<DetectResult[]>('install.detect', {})
@@ -48,16 +66,24 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         }
       })
       .catch((e) => setMsg(errorMessage(e)));
-    invokeCommand<InstallPlan>('install.plan', { target: tab, modelIds: [], customPath: pathDraftRef.current || undefined })
-      .then(setPlan)
-      .catch(() => setPlan(null));
+    // 拉账号可用模型；未手动改过则默认全选，并按勾选刷新计划
+    invokeCommand<string[]>('install.availableModels', {})
+      .then((list) => {
+        setAvailable(list);
+        if (!modelsDirty.current) {
+          selectedRef.current = list;
+          setSelected(list);
+          loadPlan(list);
+        }
+      })
+      .catch(() => {});
     if (!probe) {
       invokeCommand<InstanceCapability>('instance.probe', {})
         .then((p) => { setProbe(p); setProbeAt(new Date()); })
         .catch(() => {});
     }
     invokeCommand<QuotaSummary>('usage.getQuota', {}).then(setQuota).catch(() => setQuota(null));
-  }, [tab]);
+  }, [tab, loadPlan]);
 
   const loadUsage = useCallback((range: TimeRange) => {
     setUsageMsg(null);
@@ -91,11 +117,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     try {
       const r = await invokeCommand<ApplyResult>('install.apply', {
-        target: tab, modelIds: [], verify: true, customPath: pathDraftRef.current || undefined,
+        target: tab, modelIds: selectedRef.current, verify: true, customPath: pathDraftRef.current || undefined,
       });
       const ok = r.status === 'applied';
       setResult({ ok, text: ok ? t('config.applySuccess') : r.message });
       pathDirty.current = false;
+      modelsDirty.current = false;
       load();
     } catch (e) {
       setResult({ ok: false, text: errorMessage(e) });
@@ -104,10 +131,35 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     }
   };
 
+  const toggleModel = (id: string) => {
+    modelsDirty.current = true;
+    const next = selectedRef.current.includes(id)
+      ? selectedRef.current.filter((x) => x !== id)
+      : [...selectedRef.current, id];
+    selectedRef.current = next;
+    setSelected(next);
+    loadPlan(next);
+  };
+
+  const selectAllModels = () => {
+    modelsDirty.current = true;
+    selectedRef.current = available;
+    setSelected(available);
+    loadPlan(available);
+  };
+
+  const clearModels = () => {
+    modelsDirty.current = true;
+    selectedRef.current = [];
+    setSelected([]);
+    setPlan(null);
+  };
+
   const pickTab = (key: TabKey) => {
     setTab(key);
     setResult(null);
     pathDirty.current = false;
+    modelsDirty.current = false;
     setMsg(!WRITABLE.has(key) ? t('config.tabUnavailable') : null);
   };
 
@@ -152,6 +204,14 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             </button>
           </div>
           <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.pathEditableHint')}</div>
+
+          <ModelPicker
+            available={available}
+            selected={selected}
+            onToggle={toggleModel}
+            onSelectAll={selectAllModels}
+            onClear={clearModels}
+          />
 
           {plan ? (
             <>
@@ -199,9 +259,9 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-            <button type="button" className="btn btn-primary" disabled={busy || !pathDraft.trim()} onClick={apply}>
+            <button type="button" className="btn btn-primary" disabled={busy || !pathDraft.trim() || selected.length === 0} onClick={apply}>
               <Wand2 size={15} />
-              {t('config.applyBtn')}
+              {t('config.importModels')} · {selected.length}
             </button>
             <button type="button" className="link-btn" onClick={() => onNavigate('records')}>
               {t('config.watchRecords')}

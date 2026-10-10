@@ -276,6 +276,17 @@ impl NewApiClient {
         v.get("data")?.get("expired_time")?.as_i64()
     }
 
+    /// 当前账号可用的模型列表（GET /api/user/models）。
+    /// 站点内部已按账号分组过滤（GetUserUsableGroups）并对同名模型去重。
+    pub async fn user_models(&self) -> AppResult<Vec<String>> {
+        let resp = self
+            .get("/api/user/models")
+            .send()
+            .await
+            .map_err(AppError::Network)?;
+        Self::parse_envelope(resp).await
+    }
+
     /// 当前用户最近充值记录（GET /api/user/topup/self）。
     pub async fn topup_records(&self) -> AppResult<Vec<super::types::TopUpRecord>> {
         let resp = self

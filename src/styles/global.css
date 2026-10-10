@@ -347,6 +347,49 @@ body {
   margin-top: var(--space-2);
 }
 
+/* 模型勾选列表（一键导入） */
+.model-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.model-picker__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-picker__list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.model-row:hover {
+  background: var(--bg);
+}
+
+.model-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* 开关（设置·自动更新） */
 .toggle {
   display: inline-flex;

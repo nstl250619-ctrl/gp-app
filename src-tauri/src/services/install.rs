@@ -53,6 +53,21 @@ fn write_input(model_ids: Vec<String>) -> AppResult<WriteInput> {
     Ok(WriteInput { base_url: config::DEFAULT_BASE_URL.into(), api_key, model_ids })
 }
 
+/// 账号在 new-api 可用的模型列表（已按分组过滤+去重），供勾选导入。
+/// 拉取失败时回退硬编码默认清单（保底可用）。
+pub async fn available_models() -> Vec<String> {
+    match crate::services::account::ensure_session().await {
+        Ok(token) => {
+            let client = crate::newapi::NewApiClient::with_token(config::DEFAULT_BASE_URL, &token);
+            match client.user_models().await {
+                Ok(models) if !models.is_empty() => models,
+                _ => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
+            }
+        }
+        Err(_) => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
 pub fn detect(data_dir: &PathBuf) -> AppResult<Vec<DetectResult>> {
     let overrides = load_overrides(data_dir);
     adapters::all_adapters()

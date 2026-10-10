@@ -46,6 +46,7 @@ pub fn run() {
             commands::app::app_open_external,
             commands::app::app_track_event,
             commands::install::install_detect,
+            commands::install::install_available_models,
             commands::install::install_plan,
             commands::install::install_apply,
             commands::install::install_rollback,

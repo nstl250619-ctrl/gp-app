@@ -12,6 +12,12 @@ pub fn install_detect(state: State<AppState>) -> CommandResult<Vec<DetectResult>
     respond(services::install::detect(&state.data_dir))
 }
 
+/// 账号可用模型列表（勾选导入用）；拉取失败也回退默认清单，故不返回错误。
+#[tauri::command]
+pub async fn install_available_models() -> CommandResult<Vec<String>> {
+    CommandResult::ok(services::install::available_models().await)
+}
+
 #[tauri::command]
 pub fn install_plan(
     state: State<AppState>,
