@@ -364,7 +364,10 @@ body {
 }
 
 .model-picker__list {
-  max-height: 260px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  max-height: 220px;
   overflow-y: auto;
   padding: var(--space-2);
 }
@@ -372,11 +375,13 @@ body {
 .model-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   padding: 6px 8px;
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .model-row:hover {

@@ -27,11 +27,19 @@ impl NewApiClient {
     }
 
     fn http(&self) -> reqwest::Client {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10)) // 建连快速失败，别让用户干等 30s
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("failed to build http client")
+        // 全局单例 + cookie_store：跨调用保留 refresh cookie。
+        // JWT 过期时走 /auth/refresh 轮换会话（服务端 rotate 不新建会话），根治会话数堆积（50 上限）。
+        static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(10)) // 建连快速失败，别让用户干等 30s
+                    .timeout(Duration::from_secs(30))
+                    .cookie_store(true)
+                    .build()
+                    .expect("failed to build http client")
+            })
+            .clone()
     }
 
     fn url(&self, path: &str) -> String {
@@ -263,6 +271,15 @@ impl NewApiClient {
     /// 失败统一返回"兑换失败"（站点防枚举设计，不区分细分原因）。
     pub async fn redeem_code(&self, code: &str) -> AppResult<i64> {
         self.post_json("/api/user/topup", json!({ "key": code })).await
+    }
+
+    /// 刷新会话（POST /api/user/auth/refresh）：服务端轮换同一会话的 refresh secret（rotate），
+    /// 返回新 access token——**不新建会话**，根治会话数堆积（USER_SESSION_ACTIVE_LIMIT 50）。
+    /// 依赖共享 cookie store 里的 refresh cookie（login 时服务端 Set-Cookie 写入，轮换后自动更新）。
+    pub async fn refresh_auth(&self) -> AppResult<String> {
+        let data: super::types::LoginData =
+            self.post_json("/api/user/auth/refresh", json!({})).await?;
+        Ok(data.access_token)
     }
 
     /// 查兑换码有效期（GET /api/user/redemption/{id}，服务器补丁接口；校验 used_user_id 为本人）。

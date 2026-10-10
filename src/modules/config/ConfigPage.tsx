@@ -229,30 +229,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
                       </td>
                     </tr>
                   ))}
-                  <tr key="models">
-                    <td className="diff-table__field">{t('config.rowModel')}</td>
-                    <td>
-                      <span className="diff-table__after">
-                        <span className="muted">→</span>
-                        <span className="model-list">
-                          {(plan?.added ?? []).map((m, i) => (
-                            <span key={m}>
-                              {i > 0 && <span className="muted">{t('config.modelSep')}</span>}
-                              <span className="gp-prefix">GP:</span>
-                              <span>{m}</span>
-                            </span>
-                          ))}
-                        </span>
-                      </span>
-                    </td>
-                  </tr>
                 </tbody>
               </table>
-              {plan && plan.added.length > 0 && (
-                <div className="model-note">
-                  {plan.added.length} {t('config.modelPrefixNote')}
-                </div>
-              )}
             </>
           ) : (
             <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.needKeyFirst')}</p>

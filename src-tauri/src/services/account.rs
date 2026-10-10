@@ -212,9 +212,27 @@ fn jwt_expired(pat: &str) -> bool {
     }
 }
 
+/// 尝试用 refresh cookie 轮换会话（服务端 rotate 同一会话，不新建）。
+/// 成功返回新 access token 并写回钥匙串；任何失败返回 None（调用方回退重登）。
+/// 这是根治「会话数堆积（50 上限）」的关键路径：JWT 过期不再新建会话。
+async fn try_refresh() -> Option<String> {
+    if opt(config::CREDENTIAL_ACCOUNT_TOKEN).is_none() {
+        return None; // 无存量 token（未登录/登出），refresh 无意义
+    }
+    let client = NewApiClient::default_client();
+    match client.refresh_auth().await {
+        Ok(new_token) if !new_token.is_empty() => {
+            let _ = credential::set(config::CREDENTIAL_ACCOUNT_TOKEN, &new_token);
+            Some(new_token)
+        }
+        _ => None,
+    }
+}
+
 /// 拿一个可用的 new-api 会话令牌：
-/// 1) 存量令牌 JWT 未过期 → 直接用（服务端判失效再走重登）；
-/// 2) JWT 已过期或服务端报失效 → 用钥匙串密码静默重登换新（用户无感）。
+/// 1) 存量令牌 JWT 未过期 → 直接用（服务端判失效再走续期）；
+/// 2) JWT 已过期或服务端报失效 → **优先 refresh**（轮换同一会话，不新建，根治会话堆积）；
+/// 3) refresh 不可用（无 cookie/会话已吊销）→ 才用钥匙串密码静默重登换新。
 /// 无法恢复时返回 SessionExpired。
 pub async fn ensure_session() -> AppResult<String> {
     if let Some(pat) = opt(config::CREDENTIAL_ACCOUNT_TOKEN) {
@@ -232,11 +250,14 @@ pub async fn ensure_session() -> AppResult<String> {
                     if !is_session_expired(&e.to_string()) {
                         return Err(e); // 网络/站点错误原样上抛，不误判成过期
                     }
-                    // 服务端判定失效 → 静默重登
+                    // 服务端判定失效 → 走续期
                 }
             }
         }
-        // JWT 已过期（或服务端失效）→ 静默重登
+        // JWT 已过期（或服务端失效）→ refresh 优先（不新建会话），失败才重登
+        if let Some(t) = try_refresh().await {
+            return Ok(t);
+        }
     }
     let identifier = opt(config::CREDENTIAL_ACCOUNT_USERNAME).ok_or(AppError::SessionExpired)?;
     let password = opt(config::CREDENTIAL_ACCOUNT_PASSWORD).ok_or(AppError::SessionExpired)?;
