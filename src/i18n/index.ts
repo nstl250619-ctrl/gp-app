@@ -146,7 +146,7 @@ export const zh = {
     watchRecords: '看操作记录',
     applied: '已写入',
     connectivityFailed: '已写入，但连接未通过',
-    needKeyFirst: '请先在「总览」完成登录并选择密钥',
+    needKeyFirst: '无法预览对照表：请确认已在「总览」登录并选择密钥，且上方路径指向目标工具的 models.json（未装过该工具？先启动它一次或直接手动填路径）',
     timeToday: '今天',
     time7d: '七天',
     time30d: '30天',

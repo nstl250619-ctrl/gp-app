@@ -184,7 +184,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         ))}
       </div>
 
-      {WRITABLE.has(tab) && !!(detect?.path || pathDraft) && (
+      {WRITABLE.has(tab) && (
         <div className="card">
           {/* status badge + editable path + copy in one row */}
           <div className="config-path-row">
