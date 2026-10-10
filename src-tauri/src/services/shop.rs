@@ -70,6 +70,7 @@ fn http() -> reqwest::Client {
     reqwest::Client::builder()
         // Shop 未就绪/慢时快速失败，避免拖慢登录与总览探测（原 30s 会让界面干等）
         .timeout(Duration::from_secs(8))
+        .no_proxy() // 直连：系统代理可能错误路由 *.greenpool.cn（SSO 铸号被劫走），实测直连正常
         .build()
         .expect("shop http client")
 }

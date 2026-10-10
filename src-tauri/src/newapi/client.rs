@@ -36,6 +36,7 @@ impl NewApiClient {
                     .connect_timeout(Duration::from_secs(10)) // 建连快速失败，别让用户干等 30s
                     .timeout(Duration::from_secs(30))
                     .cookie_store(true)
+                    .no_proxy() // 直连：系统代理（Clash 等）可能把 *.greenpool.cn 错误路由，实测 SSO 被劫到 new-api
                     .build()
                     .expect("failed to build http client")
             })
