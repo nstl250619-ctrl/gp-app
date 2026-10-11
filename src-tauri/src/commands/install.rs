@@ -24,8 +24,9 @@ pub fn install_plan(
     target: String,
     model_ids: Vec<String>,
     custom_path: Option<String>,
+    base_url: Option<String>,
 ) -> CommandResult<InstallPlan> {
-    respond(services::install::plan(target, model_ids, custom_path, &state.data_dir))
+    respond(services::install::plan(target, model_ids, custom_path, base_url, &state.data_dir))
 }
 
 #[tauri::command]
@@ -35,11 +36,12 @@ pub async fn install_apply(
     model_ids: Vec<String>,
     verify: bool,
     custom_path: Option<String>,
+    base_url: Option<String>,
 ) -> CommandResult<ApplyResult> {
     // async 命令不能持 State 跨 await，先取 owned 数据。
     let data_dir = app.state::<AppState>().data_dir.clone();
     respond(
-        services::install::apply_with_verify(target, model_ids, verify, custom_path, &data_dir).await,
+        services::install::apply_with_verify(target, model_ids, verify, custom_path, base_url, &data_dir).await,
     )
 }
 

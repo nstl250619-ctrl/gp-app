@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shop-my-orders"
+description = "Enables the shop_my_orders command without any pre-configured scope."
+commands.allow = ["shop_my_orders"]
+
+[[permission]]
+identifier = "deny-shop-my-orders"
+description = "Denies the shop_my_orders command without any pre-configured scope."
+commands.deny = ["shop_my_orders"]

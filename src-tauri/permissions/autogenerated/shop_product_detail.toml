@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shop-product-detail"
+description = "Enables the shop_product_detail command without any pre-configured scope."
+commands.allow = ["shop_product_detail"]
+
+[[permission]]
+identifier = "deny-shop-product-detail"
+description = "Denies the shop_product_detail command without any pre-configured scope."
+commands.deny = ["shop_product_detail"]

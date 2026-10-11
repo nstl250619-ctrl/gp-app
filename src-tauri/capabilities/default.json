@@ -42,6 +42,10 @@
     "allow-shop-send-bind-code",
     "allow-shop-bind",
     "allow-shop-sso-url",
+    "allow-shop-products",
+    "allow-shop-product-detail",
+    "allow-shop-buy-order",
+    "allow-shop-my-orders",
     "allow-redeem-redeem"
   ]
 }

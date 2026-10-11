@@ -12,3 +12,4 @@ src-tauri/gen
 .playwright-cli/
 _model_select_mock.*
 model_mock.png
+_deploy/

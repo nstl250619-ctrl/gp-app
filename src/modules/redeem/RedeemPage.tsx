@@ -1,5 +1,5 @@
+// 兑换页（§八 设计稿同款）：输入框+按钮同行卡片 + 绿色到账提示条 + 兑换记录。
 import { useEffect, useState } from 'react';
-import { ClipboardPaste } from 'lucide-react';
 import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { RedemptionRecord, RedeemResult } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
@@ -7,12 +7,11 @@ import { t } from '@/i18n';
 import { formatUnix } from '@/utils/time';
 import { fmtUsd } from '@/utils/fmt';
 
-export default function RedeemPage({ onNavigate }: PageProps) {
+export default function RedeemPage(_props: PageProps) {
   const [code, setCode] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 兑换记录：logs type=1（兑换码核销不写 top_ups 表，从日志取）
   const [records, setRecords] = useState<RedemptionRecord[] | null>(null);
 
   const loadRecords = () => {
@@ -25,24 +24,21 @@ export default function RedeemPage({ onNavigate }: PageProps) {
     loadRecords();
   }, []);
 
-  const paste = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) setCode(text.trim());
-    } catch {
-      setMsg(t('common.unknownError'));
-    }
-  };
-
   const submit = async () => {
     setBusy(true);
     setMsg(null);
     setOkMsg(null);
     try {
       const r = await invokeCommand<RedeemResult>('redeem.redeem', { code });
-      setOkMsg(`${t('redeem.success')}（+${fmtUsd(r.grantedUsd)}）`);
+      setOkMsg(
+        r.subscriptionActive
+          ? `${t('redeem.trialHint')}（+${fmtUsd(r.grantedUsd)}）`
+          : `${t('redeem.success')}（+${fmtUsd(r.grantedUsd)}）`,
+      );
       setCode('');
       loadRecords();
+      // 服务余额已变，通知顶栏刷新
+      window.dispatchEvent(new CustomEvent('gp:balance-changed'));
     } catch (e) {
       setMsg(errorMessage(e));
     } finally {
@@ -52,45 +48,29 @@ export default function RedeemPage({ onNavigate }: PageProps) {
 
   return (
     <div>
-      <div className="page-header__title">{t('redeem.title')}</div>
-      <div className="section-subtitle">{t('redeem.subtitle')}</div>
+      <h1>{t('redeem.title')}</h1>
+      <div className="sub">{t('redeem.subtitle')}</div>
 
-      <div className="field">
-        <label className="field__label">{t('redeem.codeLabel')}</label>
-        <div className="input-row">
+      <div className="card">
+        <div className="redeem-row">
           <input
             className="input input--big"
             style={{ flex: 1 }}
             value={code}
             placeholder={t('redeem.codePlaceholder')}
             onChange={(e) => setCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !busy && code.trim()) submit(); }}
           />
-          <button type="button" className="icon-btn" onClick={paste} title={t('common.copy')}>
-            <ClipboardPaste size={16} />
+          <button type="button" className="btn btn-primary" disabled={busy || code.trim().length === 0} onClick={submit}>
+            {t('redeem.submit')}
           </button>
         </div>
+        {msg && <div className="error-text" style={{ marginTop: 'var(--space-3)', marginBottom: 0 }}>{msg}</div>}
+        {okMsg && <div className="apply-banner apply-banner--ok" style={{ marginTop: 'var(--space-3)' }}>{okMsg}</div>}
       </div>
-      <div className="hint">{t('redeem.codeHelp')}</div>
 
-      {msg && <div className="error-text">{msg}</div>}
-      {okMsg && <div className="hint" style={{ color: 'var(--success)' }}>{okMsg}</div>}
-
-      <button
-        type="button"
-        className="btn btn-primary btn-big"
-        disabled={busy || code.trim().length === 0}
-        onClick={submit}
-      >
-        {t('redeem.submit')}
-      </button>
-
-      <div className="page-header" style={{ marginTop: 'var(--space-6)', marginBottom: 0 }}>
-        <div className="section-title" style={{ margin: 0 }}>{t('redeem.recentTitle')}</div>
-        <button type="button" className="link-btn" onClick={() => onNavigate('records')}>
-          {t('common.viewAll')}
-        </button>
-      </div>
       <div className="card">
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{t('redeem.recentTitle')}</div>
         {records && records.length === 0 && <p className="muted">{t('redeem.empty')}</p>}
         {records?.map((r, i) => (
           <div className="record-row" key={i}>

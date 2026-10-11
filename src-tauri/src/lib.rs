@@ -74,6 +74,10 @@ pub fn run() {
             commands::shop::shop_bind,
             commands::shop::shop_sso_url,
             commands::shop::redeem_redeem,
+            commands::shop::shop_products,
+            commands::shop::shop_product_detail,
+            commands::shop::shop_buy_order,
+            commands::shop::shop_my_orders,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GreenPool");

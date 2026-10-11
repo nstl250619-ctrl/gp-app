@@ -15,17 +15,10 @@ pub async fn account_login(username: String, password: String) -> CommandResult<
 
 #[tauri::command]
 pub async fn account_logout(app: tauri::AppHandle) -> CommandResult<SimpleAck> {
-    // 先尽力撤销服务端会话（新版 new-api 会话体系：防会话堆积撞 USER_SESSION_ACTIVE_LIMIT）
-    if let Some(pat) = crate::credential::get(crate::config::CREDENTIAL_ACCOUNT_TOKEN)
-        .ok()
-        .flatten()
-    {
-        let client = crate::newapi::NewApiClient::with_token(crate::config::DEFAULT_BASE_URL, &pat);
-        let _ = client.auth_logout().await;
-    }
+    // 尽力撤销网关会话（网关 24h 会话，撤销失败不阻断本地登出）
+    let _ = crate::services::shop::gateway_logout().await;
     respond(services::account::logout().map(|_| {
-        // SSO 签发的 gp_token 是 24h HttpOnly Cookie，Shop 无法单方面吊销（JWT 无状态）。
-        // 退出账号时清空 WebView 浏览数据（含商城 Cookie），保证验收 #6：退出后内嵌商城回落未登录态。
+        // 退出账号时清空 WebView 浏览数据（含商城 Cookie），保证退出后回落未登录态。
         if let Some(w) = app.get_webview_window(crate::config::MAIN_WINDOW_LABEL) {
             let _ = w.clear_all_browsing_data();
         }
@@ -77,17 +70,18 @@ pub async fn account_register(
     respond(services::account::register(email, password, code).await)
 }
 
-/// 发送密码重置邮件。
+/// 发送密码重置验证码（走网关）。
 #[tauri::command]
 pub async fn account_send_password_reset(email: String) -> CommandResult<SimpleAck> {
     respond(services::account::send_password_reset(email).await.map(|_| SimpleAck))
 }
 
-/// 重置密码（粘贴邮件链接中的 email+token）→ 自动登录，返回一次性新密码。
+/// 重置密码（验证码 + 新密码）→ 自动登录，返回登录态。
 #[tauri::command]
 pub async fn account_reset_password(
     email: String,
-    token: String,
-) -> CommandResult<crate::services::account::ResetPasswordResult> {
-    respond(services::account::reset_password(email, token).await)
+    code: String,
+    new_password: String,
+) -> CommandResult<AccountStatus> {
+    respond(services::account::reset_password(email, code, new_password).await)
 }

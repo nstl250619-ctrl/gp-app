@@ -64,15 +64,26 @@ pub struct RedeemResult {
     pub quota_granted: i64,
     /// USD 计量（与 new-api 一致）：quota / 500000
     pub granted_usd: f64,
+    /// 是否触发 48h 试用订阅自动购买（尝鲜版引流码命中 TRIAL_QUOTA 面额）。
+    pub subscription_active: bool,
 }
 
 fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        // Shop 未就绪/慢时快速失败，避免拖慢登录与总览探测（原 30s 会让界面干等）
-        .timeout(Duration::from_secs(8))
-        .no_proxy() // 直连：系统代理可能错误路由 *.greenpool.cn（SSO 铸号被劫走），实测直连正常
-        .build()
-        .expect("shop http client")
+    // 全局单例：复用连接池与 TLS 会话。每调用新建 Client 会在并发（如明细并行翻页）
+    // 时产生 8+ 个独立连接池，突发建连失败直接表现为「网络连不上中转站」。
+    static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                // 连接 8s 快速失败（未就绪时不让界面干等）；总超时放宽给慢响应余量
+                .connect_timeout(Duration::from_secs(8))
+                .timeout(Duration::from_secs(15))
+                .pool_max_idle_per_host(8)
+                .no_proxy() // 直连：系统代理可能错误路由 *.greenpool.cn（SSO 铸号被劫走），实测直连正常
+                .build()
+                .expect("shop http client")
+        })
+        .clone()
 }
 
 fn url(path: &str) -> String {
@@ -360,6 +371,60 @@ async fn register_inner(email: &str, code: &str, password: &str) -> AppResult<()
     Ok(())
 }
 
+/// 找回密码发码（Shop /api/email/code scene=reset）。设备会话失效自动重建重试。
+pub async fn send_reset_code(email: &str) -> AppResult<()> {
+    match send_reset_code_inner(email).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if !is_session_error(&e.to_string()) {
+                return Err(e);
+            }
+            let _ = credential::delete(config::SHOP_SESSION_TOKEN);
+            send_reset_code_inner(email).await
+        }
+    }
+}
+
+async fn send_reset_code_inner(email: &str) -> AppResult<()> {
+    let resp = http()
+        .post(url("/api/email/code"))
+        .json(&json!({ "email": email, "scene": "reset", "session_token": device_session().await? }))
+        .send()
+        .await
+        .map_err(AppError::Network)?;
+    parse_envelope::<serde_json::Value>(resp).await.map(|_| ())
+}
+
+/// 找回密码重置（POST /api/user/reset）：改 Shop 密码 + 网关同步改 new-api 密码（直写 SQLite）。
+/// 成功后不自动登录（前端拿到新密码后自行登录）。设备会话失效自动重建重试。
+pub async fn reset_password(email: &str, code: &str, new_password: &str) -> AppResult<()> {
+    match reset_password_inner(email, code, new_password).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if !is_session_error(&e.to_string()) {
+                return Err(e);
+            }
+            let _ = credential::delete(config::SHOP_SESSION_TOKEN);
+            reset_password_inner(email, code, new_password).await
+        }
+    }
+}
+
+async fn reset_password_inner(email: &str, code: &str, new_password: &str) -> AppResult<()> {
+    let resp = http()
+        .post(url("/api/user/reset"))
+        .json(&json!({
+            "email": email,
+            "code": code,
+            "new_password": new_password,
+            "session_token": device_session().await?
+        }))
+        .send()
+        .await
+        .map_err(AppError::Network)?;
+    parse_envelope::<serde_json::Value>(resp).await.map(|_| ())
+}
+
 /// Shop SMTP 发码（绑定场景，scene=register）。设备会话失效自动重建重试。
 pub async fn send_bind_code() -> AppResult<()> {
     match send_bind_code_inner().await {
@@ -450,16 +515,13 @@ async fn register_attempt(body: serde_json::Value) -> AppResult<serde_json::Valu
     serde_json::from_str(&text).map_err(|_| AppError::Other("商城响应无法解析".into()))
 }
 
-/// 兑换（真核销）：登录态直调 new-api，Shop 不参与。
+/// 兑换（真核销）：走网关（含 48h 试用自动购买），Shop 网关代理 new-api。
 pub async fn redeem(code: String) -> AppResult<RedeemResult> {
     let code = code.trim().to_string();
     if code.is_empty() {
         return Err(AppError::Other("请输入兑换码".into()));
     }
-    let token = crate::services::account::ensure_session().await?;
-    let client = crate::newapi::NewApiClient::with_token(config::DEFAULT_BASE_URL, &token);
-    let quota = client.redeem_code(&code).await?;
-    Ok(RedeemResult { quota_granted: quota, granted_usd: config::quota_to_usd(quota) })
+    gateway_redeem(&code).await
 }
 
 /// 登出：清 Shop 登录态（设备会话保留，避免重复建会话）。
@@ -467,4 +529,341 @@ pub fn logout() -> AppResult<()> {
     let _ = credential::delete(config::SHOP_AUTH_TOKEN);
     let _ = credential::delete(config::SHOP_USER_ID);
     Ok(())
+}
+
+// ==================== 网关 new-api 代理（P2 收敛：额度/模型/密钥/用量/兑换统一走网关） ====================
+
+fn gateway_token() -> AppResult<String> {
+    shop_auth_token().ok_or_else(|| AppError::Other("请先登录".into()))
+}
+
+/// 静默重登：用存储的邮箱+密码重建登录态（网关重启/会话过期后自愈，用户无感）。
+/// 全局互斥：并发请求同时发现会话失效时只重登一次，避免登录风暴与钥匙串并发写。
+async fn gateway_relogin() -> AppResult<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let lock = LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _guard = lock.lock().await;
+    let identifier = credential::get(config::CREDENTIAL_ACCOUNT_EMAIL)?
+        .or_else(|| credential::get(config::CREDENTIAL_ACCOUNT_USERNAME).ok().flatten())
+        .ok_or(AppError::SessionExpired)?;
+    let password = stored_shop_password().ok_or(AppError::SessionExpired)?;
+    client_login(&identifier, &password).await?;
+    Ok(())
+}
+
+async fn gateway_get<T: serde::de::DeserializeOwned>(path: &str) -> AppResult<T> {
+    match gateway_get_once(path).await {
+        Err(e) if is_session_error(&e.to_string()) => {
+            // 会话失效（网关重启/过期）：静默重登后重试一次
+            gateway_relogin().await?;
+            gateway_get_once(path).await
+        }
+        r => r,
+    }
+}
+
+async fn gateway_get_once<T: serde::de::DeserializeOwned>(path: &str) -> AppResult<T> {
+    let resp = http()
+        .get(url(path))
+        .bearer_auth(&gateway_token()?)
+        .send()
+        .await
+        .map_err(AppError::Network)?;
+    parse_envelope(resp).await
+}
+
+async fn gateway_post<T: serde::de::DeserializeOwned>(path: &str, body: serde_json::Value) -> AppResult<T> {
+    match gateway_post_once(path, body.clone()).await {
+        Err(e) if is_session_error(&e.to_string()) => {
+            gateway_relogin().await?;
+            gateway_post_once(path, body).await
+        }
+        r => r,
+    }
+}
+
+async fn gateway_post_once<T: serde::de::DeserializeOwned>(path: &str, body: serde_json::Value) -> AppResult<T> {
+    let resp = http()
+        .post(url(path))
+        .bearer_auth(&gateway_token()?)
+        .json(&body)
+        .send()
+        .await
+        .map_err(AppError::Network)?;
+    parse_envelope(resp).await
+}
+
+/// new-api self（余额/用量），经网关 /api/user/quota 代理。
+pub async fn gateway_self() -> AppResult<crate::newapi::SelfData> {
+    gateway_get("/api/user/quota").await
+}
+
+/// 订阅明细：激活订阅的配额/已用/到期（quota 原始单位）。
+/// 经网关 /api/user/subscription（new-api subscription/self 代理）。
+/// 数据形如 { subscriptions: [{ subscription: { amount_total, amount_used, end_time } }] }（嵌套）。
+/// 多个激活订阅时取剩余最多的一个（当前业务只会有一个生效订阅）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionInfo {
+    pub total: i64,
+    pub used: i64,
+    pub end_time: i64,
+}
+
+impl SubscriptionInfo {
+    pub fn remaining(&self) -> i64 {
+        (self.total - self.used).max(0)
+    }
+}
+
+pub async fn gateway_subscription() -> AppResult<Option<SubscriptionInfo>> {
+    #[derive(Deserialize)]
+    struct SubItem {
+        #[serde(default)]
+        subscription: Option<SubInner>,
+    }
+    #[derive(Deserialize)]
+    struct SubInner {
+        #[serde(default, alias = "amount_total")]
+        amount_total: i64,
+        #[serde(default, alias = "amount_used")]
+        amount_used: i64,
+        #[serde(default, alias = "end_time")]
+        end_time: i64,
+    }
+    #[derive(Deserialize)]
+    struct SubData {
+        #[serde(default, alias = "subscriptions")]
+        subscriptions: Vec<SubItem>,
+    }
+    let d: SubData = gateway_get("/api/user/subscription").await?;
+    Ok(d
+        .subscriptions
+        .iter()
+        .filter_map(|s| s.subscription.as_ref())
+        .map(|s| SubscriptionInfo { total: s.amount_total, used: s.amount_used, end_time: s.end_time })
+        .max_by_key(|s| s.remaining()))
+}
+
+/// 账号可用模型（分组过滤+去重），经网关 /api/user/models。
+pub async fn gateway_models() -> AppResult<Vec<String>> {
+    gateway_get("/api/user/models").await
+}
+
+/// 令牌列表（脱敏），经网关 /api/user/keys。
+pub async fn gateway_list_keys() -> AppResult<Vec<crate::newapi::TokenListItem>> {
+    gateway_get("/api/user/keys").await
+}
+
+/// 建令牌，经网关 /api/user/keys。
+pub async fn gateway_create_key(name: &str) -> AppResult<()> {
+    gateway_post::<serde_json::Value>("/api/user/keys", json!({ "name": name }))
+        .await
+        .map(|_| ())
+}
+
+/// 取令牌明文，经网关 /api/user/keys/:id/plain。
+pub async fn gateway_key_plain(id: i64) -> AppResult<String> {
+    #[derive(Deserialize)]
+    struct KeyData {
+        #[serde(default)]
+        key: String,
+    }
+    let d: KeyData = gateway_get(&format!("/api/user/keys/{}/plain", id)).await?;
+    if d.key.is_empty() {
+        Err(AppError::Other("令牌密钥为空".into()))
+    } else {
+        Ok(d.key)
+    }
+}
+
+/// 用量日志（经网关 /api/user/usage）。log_type：2=成功计费 5=失败；page 从 1 起（200 条/页）。
+pub async fn gateway_usage(start_ts: i64, end_ts: i64, page: i64, log_type: i64) -> AppResult<(Vec<crate::newapi::LogItem>, i64)> {
+    #[derive(Deserialize)]
+    struct UsageData {
+        #[serde(default)]
+        items: Vec<crate::newapi::LogItem>,
+        #[serde(default)]
+        total: i64,
+    }
+    let d: UsageData = gateway_get(&format!(
+        "/api/user/usage?start_ts={}&end_ts={}&page={}&type={}",
+        start_ts, end_ts, page, log_type
+    ))
+    .await?;
+    Ok((d.items, d.total))
+}
+
+/// 用量聚合（网关 /api/user/usage/summary）：1 个请求拿到 明细前100 + 总数 + 失败数 + 按天积分。
+/// 翻页与聚合在网关侧完成（同机内网），替代桌面端 N 次翻页往返。
+pub async fn gateway_usage_summary(
+    start_ts: i64,
+    end_ts: i64,
+) -> AppResult<crate::services::usage::GatewayUsageSummary> {
+    gateway_get(&format!("/api/user/usage/summary?start_ts={}&end_ts={}", start_ts, end_ts))
+        .await
+}
+
+/// 最近充值记录，经网关 /api/user/topups。
+pub async fn gateway_topups() -> AppResult<Vec<crate::newapi::TopUpRecord>> {
+    gateway_get("/api/user/topups").await
+}
+
+/// 兑换记录（type=1 日志），经网关 /api/user/redemptions。
+pub async fn gateway_redemptions() -> AppResult<Vec<crate::newapi::LogItem>> {
+    gateway_get("/api/user/redemptions").await
+}
+
+/// 兑换码核销（含 48h 试用），经网关 /api/user/redeem。
+pub async fn gateway_redeem(code: &str) -> AppResult<RedeemResult> {
+    #[derive(Deserialize)]
+    struct SubscriptionField {
+        #[serde(default)]
+        active: bool,
+    }
+    #[derive(Deserialize)]
+    struct RedeemData {
+        #[serde(default)]
+        quota: i64,
+        #[serde(default)]
+        subscription: Option<SubscriptionField>,
+    }
+    let d: RedeemData = gateway_post("/api/user/redeem", json!({ "code": code })).await?;
+    Ok(RedeemResult {
+        quota_granted: d.quota,
+        granted_usd: config::quota_to_usd(d.quota),
+        subscription_active: d.subscription.map(|s| s.active).unwrap_or(false),
+    })
+}
+
+/// 撤销网关会话（清 new-api 会话 + 解绑），经网关 /api/user/logout。失败不阻断（会话 24h 自动过期）。
+pub async fn gateway_logout() {
+    let _ = gateway_post::<serde_json::Value>("/api/user/logout", json!({})).await;
+}
+
+// ==================== 网关商城（P3：商品列表 / 余额直购） ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductItem {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub price: f64,
+    #[serde(default, alias = "compare_price")]
+    pub compare_price: Option<f64>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, alias = "fulfill_type")]
+    pub fulfill_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkuItem {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub price: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductDetail {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub price: f64,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub skus: Vec<SkuItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuyResult {
+    #[serde(default, alias = "order_no")]
+    pub order_no: String,
+    #[serde(default)]
+    pub amount: f64,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, alias = "delivery_text")]
+    pub delivery_text: String,
+}
+
+/// 工具商城展示的商品白名单（Shop 后台 goods id）。
+/// 仅展示绿池自有卡密商品：日卡 → 周卡 → 月卡（按周期递增）。
+/// Shop 后台新增商品需同步此列表；无关商品（号码类/补差价等）不进入工具商城。
+const FEATURED_GOODS: [i64; 3] = [9, 7, 8];
+
+/// 商品列表（网关 /api/products，按白名单过滤并按周期排序）。
+pub async fn gateway_products() -> AppResult<Vec<ProductItem>> {
+    #[derive(Deserialize)]
+    struct ListData {
+        #[serde(default)]
+        list: Vec<ProductItem>,
+    }
+    let d: ListData = gateway_get("/api/products").await?;
+    let mut list = d.list;
+    list.retain(|g| FEATURED_GOODS.contains(&g.id));
+    list.sort_by_key(|g| FEATURED_GOODS.iter().position(|&id| id == g.id).unwrap_or(usize::MAX));
+    Ok(list)
+}
+
+/// 商品详情（含 sku，网关 /api/products/:id）。
+pub async fn gateway_product_detail(id: i64) -> AppResult<ProductDetail> {
+    gateway_get(&format!("/api/products/{}", id)).await
+}
+
+/// 余额直购下单（网关 /api/orders，卡池自动发货兑换码）。
+pub async fn gateway_buy_order(goods_id: i64, sku_id: i64, quantity: i64) -> AppResult<BuyResult> {
+    gateway_post("/api/orders", json!({ "goods_id": goods_id, "sku_id": sku_id, "quantity": quantity }))
+        .await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderCode {
+    #[serde(default, alias = "code_id")]
+    pub code_id: String,
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShopOrderItem {
+    #[serde(default, alias = "order_id")]
+    pub order_id: String,
+    #[serde(default, alias = "product_name")]
+    pub product_name: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, alias = "created_at")]
+    pub created_at: i64,
+    #[serde(default)]
+    pub codes: Vec<OrderCode>,
+}
+
+/// 我的商城订单（含发货兑换码），经网关 /api/user/orders。
+pub async fn gateway_orders() -> AppResult<Vec<ShopOrderItem>> {
+    #[derive(Deserialize)]
+    struct OrdersData {
+        #[serde(default)]
+        items: Vec<ShopOrderItem>,
+    }
+    let d: OrdersData = gateway_get("/api/user/orders?page=1&page_size=5").await?;
+    Ok(d.items)
 }

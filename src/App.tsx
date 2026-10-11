@@ -1,52 +1,73 @@
 import { useCallback, useEffect, useState } from 'react';
-import { History, Link2, Settings as SettingsIcon, Store, Ticket, Wand2, Wallet } from 'lucide-react';
+import { History, Settings as SettingsIcon, Store, Ticket, Wand2 } from 'lucide-react';
 import { Gauge } from 'lucide-react';
 import { t } from './i18n';
 import { invokeCommand } from './services/ipc';
-import type { InstanceCapability } from './types/ipc';
+import type { AppStatus, InstanceCapability } from './types/ipc';
 import { checkForUpdate, downloadAndInstall, isAutoUpdateOn } from './utils/updater';
-import OverviewPage from './modules/overview/OverviewPage';
+import LoginScreen from './modules/auth/LoginScreen';
+import LoginBackdrop from './modules/auth/LoginBackdrop';
+import TopBar from './modules/layout/TopBar';
 import RedeemPage from './modules/redeem/RedeemPage';
 import ConfigPage from './modules/config/ConfigPage';
+import UsagePage from './modules/config/UsagePage';
 import ShopPage from './modules/shop/ShopPage';
-import WalletPage from './modules/wallet/WalletPage';
 import RecordsPage from './modules/records/RecordsPage';
 import SettingsPage from './modules/settings/SettingsPage';
 
+// 设计稿导航（§八）：一键配置 / 用量 / 商城 / 兑换 / 记录 / 设置
 const PAGES = {
-  overview: OverviewPage,
-  redeem: RedeemPage,
   config: ConfigPage,
+  usage: UsagePage,
   shop: ShopPage,
-  wallet: WalletPage,
+  redeem: RedeemPage,
   records: RecordsPage,
   settings: SettingsPage,
 } as const;
 
 type PageKey = keyof typeof PAGES;
 
-const MAIN_NAV: PageKey[] = ['overview', 'redeem', 'config', 'shop', 'wallet'];
+const MAIN_NAV: PageKey[] = ['config', 'usage', 'shop', 'redeem'];
 const BOTTOM_NAV: PageKey[] = ['records', 'settings'];
 
 const NAV_ICONS: Record<PageKey, typeof Gauge> = {
-  overview: Gauge,
-  redeem: Ticket,
   config: Wand2,
+  usage: Gauge,
   shop: Store,
-  wallet: Wallet,
+  redeem: Ticket,
   records: History,
   settings: SettingsIcon,
 };
 
+const EMPTY_STATUS: AppStatus = {
+  name: '',
+  abbr: '',
+  version: '',
+  loggedIn: false,
+  username: '',
+  hasApiKey: false,
+  targetDetected: false,
+  shopReady: false,
+};
+
 export default function App() {
-  const [page, setPage] = useState<PageKey>('overview');
-  // 页面保活：首次访问挂载，之后仅切换可见性（切页瞬时、状态/iframe 不丢）
-  const [visited, setVisited] = useState<Set<PageKey>>(() => new Set<PageKey>(['overview']));
+  const [page, setPage] = useState<PageKey>('config');
+  // 页面保活：首次访问挂载，之后仅切换可见性（切页瞬时、状态不丢）
+  const [visited, setVisited] = useState<Set<PageKey>>(() => new Set<PageKey>(['config']));
   const [probe, setProbe] = useState<InstanceCapability | null>(null);
   const [version, setVersion] = useState('');
+  // 登录态：null=检测中，否则以 loggedIn 分流（§16 登录门面）
+  const [auth, setAuth] = useState<AppStatus | null>(null);
 
   const refreshProbe = useCallback(() => {
     invokeCommand<InstanceCapability>('instance.probe', {}).then(setProbe).catch(() => {});
+  }, []);
+
+  // 启动即探测登录态
+  useEffect(() => {
+    invokeCommand<AppStatus>('app.status', {})
+      .then(setAuth)
+      .catch(() => setAuth(EMPTY_STATUS));
   }, []);
 
   useEffect(() => {
@@ -96,16 +117,28 @@ export default function App() {
   const probeText =
     probeState === 'ok' ? t('statusbar.probeOk') : probeState === 'fail' ? t('statusbar.probeFail') : t('statusbar.probeUnknown');
 
+  // 登录态分流（§16）：检测中 → 闪屏；未登录 → 登录门面；已登录 → 主界面
+  if (!auth) {
+    return (
+      <div className="splash">
+        <LoginBackdrop />
+        <div className="splash__inner">
+          <span className="splash__logo">GP</span>
+          <span className="splash__name">{t('nav.appTitle')} · GreenPool</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!auth.loggedIn) {
+    return <LoginScreen onDone={(username) => setAuth({ ...auth, loggedIn: true, username })} />;
+  }
+
   return (
     <div className="app-shell">
+      <TopBar username={auth.username} newapiOk={probe?.reachable} shopReady={auth.shopReady} />
+
       <aside className="sidebar">
-        <div className="sidebar__brand">
-          <Link2 size={20} color="var(--accent)" />
-          {t('nav.appTitle')}
-          <span style={{ color: 'var(--brand-green)', fontSize: 13, fontWeight: 600, marginLeft: 6 }}>
-            · GreenPool
-          </span>
-        </div>
         <nav className="sidebar__nav">{renderNav(MAIN_NAV)}</nav>
         <div className="sidebar__spacer" />
         <div className="sidebar__divider" />
@@ -120,7 +153,7 @@ export default function App() {
           return (
             <div
               key={key}
-              className={key === 'shop' ? 'page page--full' : 'page'}
+              className="page"
               style={{ display: active ? undefined : 'none' }}
             >
               <Comp onNavigate={navigate} />

@@ -4,4 +4,4 @@ pub mod client;
 pub mod types;
 
 pub use client::NewApiClient;
-pub use types::{InstanceStatus, LogItem, TopUpRecord};
+pub use types::{InstanceStatus, LogItem, SelfData, TokenListItem, TopUpRecord};

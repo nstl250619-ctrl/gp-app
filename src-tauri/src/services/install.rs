@@ -48,22 +48,36 @@ fn seeds_for(model_ids: &[String]) -> Vec<ModelSeed> {
         .collect()
 }
 
-fn write_input(model_ids: Vec<String>) -> AppResult<WriteInput> {
-    let api_key = credential::get(config::CREDENTIAL_ACCOUNT_API_KEY)?.ok_or(AppError::KeyMissing)?;
-    Ok(WriteInput { base_url: config::DEFAULT_BASE_URL.into(), api_key, model_ids })
+/// 服务地址白名单：导入配置只允许绿池官方网关（防任意 URL 注入用户配置文件）。
+const ALLOWED_BASE_URLS: [&str; 2] = ["https://api.greenpool.cn", "https://aigw.greenpool.cn"];
+
+fn normalize_base_url(base_url: Option<String>) -> AppResult<String> {
+    match base_url {
+        None => Ok(config::DEFAULT_BASE_URL.into()),
+        Some(u) => {
+            let u = u.trim().trim_end_matches('/').to_string();
+            if ALLOWED_BASE_URLS.contains(&u.as_str()) {
+                Ok(u)
+            } else {
+                Err(AppError::Other("不支持的服务地址".into()))
+            }
+        }
+    }
 }
 
-/// 账号在 new-api 可用的模型列表（已按分组过滤+去重），供勾选导入。
+fn write_input(model_ids: Vec<String>, base_url: Option<String>) -> AppResult<WriteInput> {
+    let api_key = credential::get(config::CREDENTIAL_ACCOUNT_API_KEY)?.ok_or(AppError::KeyMissing)?;
+    Ok(WriteInput { base_url: normalize_base_url(base_url)?, api_key, model_ids })
+}
+
+/// 账号可用模型列表（分组过滤+去重），走网关 /api/user/models。
 /// 拉取失败时回退硬编码默认清单（保底可用）。
 pub async fn available_models() -> Vec<String> {
     match crate::services::account::ensure_session().await {
-        Ok(token) => {
-            let client = crate::newapi::NewApiClient::with_token(config::DEFAULT_BASE_URL, &token);
-            match client.user_models().await {
-                Ok(models) if !models.is_empty() => models,
-                _ => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
-            }
-        }
+        Ok(_) => match crate::services::shop::gateway_models().await {
+            Ok(models) if !models.is_empty() => models,
+            _ => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
+        },
         Err(_) => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
     }
 }
@@ -76,17 +90,29 @@ pub fn detect(data_dir: &PathBuf) -> AppResult<Vec<DetectResult>> {
         .collect()
 }
 
-pub fn plan(target: String, model_ids: Vec<String>, custom_path: Option<String>, data_dir: &PathBuf) -> AppResult<InstallPlan> {
+pub fn plan(
+    target: String,
+    model_ids: Vec<String>,
+    custom_path: Option<String>,
+    base_url: Option<String>,
+    data_dir: &PathBuf,
+) -> AppResult<InstallPlan> {
     let ids = resolve_ids(model_ids);
-    let input = write_input(ids.clone())?;
+    let input = write_input(ids.clone(), base_url)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
     adapter.plan(&input, &seeds, resolve_custom(custom_path, data_dir, &target).as_deref())
 }
 
-fn apply_locked(target: String, model_ids: Vec<String>, custom_path: Option<String>, data_dir: &PathBuf) -> AppResult<ApplyResult> {
+fn apply_locked(
+    target: String,
+    model_ids: Vec<String>,
+    custom_path: Option<String>,
+    base_url: Option<String>,
+    data_dir: &PathBuf,
+) -> AppResult<ApplyResult> {
     let ids = resolve_ids(model_ids);
-    let input = write_input(ids.clone())?;
+    let input = write_input(ids.clone(), base_url)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
     let custom = resolve_custom(custom_path.clone(), data_dir, &target);
@@ -117,17 +143,19 @@ pub async fn apply_with_verify(
     model_ids: Vec<String>,
     verify: bool,
     custom_path: Option<String>,
+    base_url: Option<String>,
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
     let mut result = {
         let _guard = lock()?;
-        apply_locked(target, model_ids.clone(), custom_path, data_dir)?
+        apply_locked(target, model_ids.clone(), custom_path, base_url.clone(), data_dir)?
     };
 
     if verify && result.verify_ok {
         let model = resolve_ids(model_ids).into_iter().next().unwrap_or_default();
         if let Ok(key) = crate::services::account::require_api_key() {
-            let client = crate::newapi::NewApiClient::default_client();
+            // 连通自测走用户选定的服务地址（默认 api，选 aigw 则测 aigw）
+            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url)?);
             match client.verify_key(&key, &model).await {
                 Ok(true) => {}
                 Ok(false) => {

@@ -8,6 +8,7 @@
   --border: #E2E5EA;
 
   --accent: #0B6FA4;            /* 唯一品牌强调色：线上动作 */
+  --accent-deep: #116B96;       /* 强调色深端：商城余额条渐变 */
   --accent-on: #FFFFFF;
   --brand-green: #22C55E;       /* 品牌浅绿：侧栏 GreenPool 标注 */
   --signal-local-write: #B45309; /* 第二信号色：本机写入 */
@@ -27,6 +28,28 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --titlebar-height: 40px;
+  --topbar-height: 56px;
   --sidebar-width: 236px;
   --statusbar-height: 32px;
+
+  /* 全屏登录页（深色沉浸主题，§16 登录门面） */
+  --login-bg-1: #06131B;                 /* 渐变起点（深蓝） */
+  --login-bg-2: #081D24;                 /* 渐变中点 */
+  --login-bg-3: #07220F;                 /* 渐变终点（墨绿） */
+  --login-orb-blue: #0B6FA4;
+  --login-orb-green: #22C55E;
+  --login-node-blue: #0B6FA4;
+  --login-node-green: #22C55E;
+  --login-particle: #5EEAD4;
+  --login-particle-blue: #7DD3FC;
+  --login-btn-end: #0E86C7;              /* 登录按钮渐变终点 */
+  --login-error: #FCA5A5;                /* 登录页错误文字 */
+  --login-card-bg: rgba(10, 26, 32, 0.55);
+  --login-border: rgba(255, 255, 255, 0.14);
+  --login-field-bg: rgba(255, 255, 255, 0.08);
+  --login-text: #FFFFFF;
+  --login-text-muted: rgba(255, 255, 255, 0.55);
+  --login-text-soft: rgba(255, 255, 255, 0.7);
+  --login-tint: #34D17B;
+  --login-hint: #9BE8B7;
 }
