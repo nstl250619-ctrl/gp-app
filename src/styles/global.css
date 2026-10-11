@@ -1592,7 +1592,7 @@ h1 {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  height: 170px;
+  height: 280px;
   overflow-x: auto;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border);
@@ -1645,4 +1645,14 @@ h1 {
   color: var(--muted);
   white-space: nowrap;
   margin-top: 2px;
+}
+
+/* 刷新按钮旋转动画 */
+@keyframes gp-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.gp-spin {
+  animation: gp-spin 0.9s linear infinite;
 }

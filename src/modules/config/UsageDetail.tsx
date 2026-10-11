@@ -1,6 +1,7 @@
 // 用量分区（统计/明细双 tab）：统计 = 积分按天柱状图；明细 = 分页表格（20 条/页，后端最多 100 条）。
 // 时间筛选同时驱动统计卡与两个视图。
 import { useEffect, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type { DayStat, UsageDetail as UsageDetailData } from '@/types/ipc';
 import { t } from '@/i18n';
 import { formatUnix } from '@/utils/time';
@@ -68,7 +69,7 @@ function StatsView({ daily, range, err }: { daily: DayStat[]; range: TimeRange; 
     return <p className="muted" style={{ padding: 'var(--space-4)' }}>{err || t('usage.statsEmpty')}</p>;
   }
   return (
-    <div style={{ padding: 'var(--space-5) var(--space-4) var(--space-4)' }}>
+    <div style={{ padding: '28px var(--space-4) var(--space-4)' }}>
       <div className="stats-chart">
         {days.map((d) => (
           <div className="stats-chart__col" key={d.day} style={compact ? { minWidth: 20 } : undefined}>
@@ -93,9 +94,11 @@ interface Props {
   onRange: (r: TimeRange) => void;
   usage: UsageDetailData | null;
   usageMsg: string | null;
+  onRefresh: () => void;
+  refreshing: boolean;
 }
 
-export default function UsageDetailSection({ range, onRange, usage, usageMsg }: Props) {
+export default function UsageDetailSection({ range, onRange, usage, usageMsg, onRefresh, refreshing }: Props) {
   const [view, setView] = useState<View>('detail');
   const [page, setPage] = useState(1);
   // 数据切换（时间范围/重新拉取）时回到第一页
@@ -136,6 +139,17 @@ export default function UsageDetailSection({ range, onRange, usage, usageMsg }: 
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={refreshing}
+            onClick={onRefresh}
+            title={t('common.refresh')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px' }}
+          >
+            <RefreshCw size={13} className={refreshing ? 'gp-spin' : undefined} />
+            {t('common.refresh')}
+          </button>
           <div className="tabs" style={{ marginBottom: 0 }}>
           {RANGES.map((r) => (
             <button

@@ -16,32 +16,37 @@ export default function UsagePage() {
   const loadUsage = useCallback((range: TimeRange) => {
     setUsageMsg(null);
     const { start, end } = rangeTimestamps(range);
-    invokeCommand<UsageDetail>('usage.detail', { startTs: start, endTs: end })
+    return invokeCommand<UsageDetail>('usage.detail', { startTs: start, endTs: end })
       .then(setUsage)
       .catch((e) => { setUsage(null); setUsageMsg(errorMessage(e)); });
   }, []);
 
-  useEffect(() => {
-    loadUsage(timeRange);
-  }, [loadUsage, timeRange]);
-
-  // 余额/用量统一刷新（页面保活下不重新挂载，兑换等外部变更靠事件驱动）
   const refreshQuota = useCallback(() => {
     invokeCommand<QuotaSummary>('usage.getQuota', {}).then(setQuota).catch(() => setQuota(null));
   }, []);
 
   useEffect(() => {
     refreshQuota();
-    window.addEventListener('gp:balance-changed', refreshQuota);
-    return () => window.removeEventListener('gp:balance-changed', refreshQuota);
-  }, [refreshQuota]);
+    loadUsage(timeRange);
+  }, [refreshQuota, loadUsage, timeRange]);
 
-  // 兑换成功（subscription/quota 变化）同时刷新明细分区
+  // 30 分钟自动刷新（不做实时轮询）
   useEffect(() => {
-    const onChange = () => loadUsage(timeRange);
-    window.addEventListener('gp:balance-changed', onChange);
-    return () => window.removeEventListener('gp:balance-changed', onChange);
-  }, [loadUsage, timeRange]);
+    const t = window.setInterval(() => {
+      refreshQuota();
+      loadUsage(timeRange);
+    }, 30 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [refreshQuota, loadUsage, timeRange]);
+
+  // 手动刷新（时间筛选左侧按钮）
+  const [refreshing, setRefreshing] = useState(false);
+  const manualRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    refreshQuota();
+    try { await loadUsage(timeRange); } finally { setRefreshing(false); }
+  }, [refreshing, refreshQuota, loadUsage, timeRange]);
 
   const usd = (v: number | undefined | null, fmt: (n: number) => string) =>
     v === undefined || v === null ? '—' : (
@@ -108,7 +113,7 @@ export default function UsagePage() {
         </div>
       </div>
 
-      <UsageDetailSection range={timeRange} onRange={setTimeRange} usage={usage} usageMsg={usageMsg} />
+      <UsageDetailSection range={timeRange} onRange={setTimeRange} usage={usage} usageMsg={usageMsg} onRefresh={manualRefresh} refreshing={refreshing} />
     </div>
   );
 }
