@@ -4,7 +4,7 @@ import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { QuotaSummary, UsageDetail } from '@/types/ipc';
 import { t } from '@/i18n';
 import { fmtCredits, fmtUsdFloor2 } from '@/utils/fmt';
-import { formatUnix } from '@/utils/time';
+import { formatDateTime } from '@/utils/time';
 import UsageDetailSection, { rangeLabel, rangeTimestamps, type TimeRange } from './UsageDetail';
 
 export default function UsagePage() {
@@ -75,7 +75,7 @@ export default function UsagePage() {
             {sub ? (
               <>
                 <div>{t('usage.subQuotaRow')} {fmtUsdFloor2(quota?.subscriptionTotalUsd ?? 0)} · {t('usage.subUsedRow')} {fmtUsdFloor2(quota?.subscriptionUsedUsd ?? 0)}</div>
-                <div>{t('usage.subExpireRow')} {quota?.subscriptionEndTime ? formatUnix(quota.subscriptionEndTime) : '—'}</div>
+                <div>{t('usage.subExpireRow')} {quota?.subscriptionEndTime ? formatDateTime(quota.subscriptionEndTime) : '—'}</div>
               </>
             ) : (
               <div>{t('usage.noSubscription')}</div>

@@ -3,6 +3,14 @@ import { t } from '@/i18n';
 
 const hmFormatter = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 const mdFormatter = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' });
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
 function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -31,4 +39,11 @@ export function formatRelative(date: Date, now: Date = new Date()): string {
 export function formatUnix(seconds: number, now: Date = new Date()): string {
   if (!seconds) return '';
   return formatRelative(new Date(seconds * 1000), now);
+}
+
+/// 绝对时间点（订阅到期、兑换码有效期等未来时间），输出固定日期时间（如 2026/10/14 01:23）。
+/// 不能用 formatRelative：其对未来时间会得到负 diffMin 而误显示成「刚刚」。
+export function formatDateTime(seconds: number): string {
+  if (!seconds) return '';
+  return dateTimeFormatter.format(new Date(seconds * 1000));
 }

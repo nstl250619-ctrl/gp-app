@@ -7,6 +7,25 @@ import type { BuyResult, ProductItem, ShopOrderItem, ShopStatus, WalletSummary }
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
 
+// 商品卡特性行（与 new-api 订阅计划 subtitle 对齐；i18n 值用 \n 分行）
+const FEAT_KEY_BY_ID: Record<number, string> = { 7: 'mall.feat7', 8: 'mall.feat8', 9: 'mall.feat9' };
+
+// 商城页缓存（sessionStorage）：二次进入秒开，后台静默刷新
+const CACHE_KEY = 'gp.shop.cache.v1';
+
+function FeatureLines({ text }: { text: string }) {
+  return (
+    <div className="pcard__ft">
+      {text.split('\n').filter(Boolean).map((line) => (
+        <div className="pcard__ft-row" key={line}>
+          <span className="pcard__ft-dot">·</span>
+          <span>{line}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ShopPage(_props: PageProps) {
   const [shop, setShop] = useState<ShopStatus | null>(null);
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
@@ -28,12 +47,35 @@ export default function ShopPage(_props: PageProps) {
   };
 
   useEffect(() => {
+    // 先读会话缓存立即渲染（秒开），再后台并行刷新
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const c = JSON.parse(raw) as { shop?: ShopStatus; wallet?: WalletSummary; goods?: ProductItem[]; orders?: ShopOrderItem[] };
+        if (c.shop) setShop(c.shop);
+        if (c.wallet) setWallet(c.wallet);
+        if (c.goods) setGoods(c.goods);
+        if (c.orders) setOrders(c.orders);
+      }
+    } catch { /* ignore */ }
+
+    const persist = (patch: Record<string, unknown>) => {
+      try {
+        const prev = JSON.parse(sessionStorage.getItem(CACHE_KEY) || '{}');
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ...prev, ...patch }));
+      } catch { /* ignore */ }
+    };
+
     invokeCommand<ShopStatus>('shop.status', {})
-      .then(setShop)
+      .then((s) => { setShop(s); persist({ shop: s }); })
       .catch(() => setShop({ ready: false, baseUrl: '', ssoReady: false, message: '' }));
-    invokeCommand<WalletSummary>('shop.wallet', {}).then(setWallet).catch(() => {});
+    invokeCommand<WalletSummary>('shop.wallet', {})
+      .then((w) => { setWallet(w); persist({ wallet: w }); })
+      .catch(() => {});
     loadGoods();
-    invokeCommand<ShopOrderItem[]>('shop.my_orders', {}).then(setOrders).catch(() => setOrders([]));
+    invokeCommand<ShopOrderItem[]>('shop.my_orders', {})
+      .then((o) => { setOrders(o); persist({ orders: o }); })
+      .catch(() => setOrders([]));
   }, []);
 
   const openShop = async () => {
@@ -92,7 +134,7 @@ export default function ShopPage(_props: PageProps) {
               <div className="pcard__img"><Gem size={30} color="var(--brand-green)" /></div>
               <div className="pcard__bd">
                 <div className="pcard__nm">{t('mall.trialTitle')}</div>
-                <div className="pcard__dc">{t('mall.trialDesc')}</div>
+                <FeatureLines text={t('mall.trialFeatures')} />
                 <div className="pcard__rw">
                   <span className="pcard__pr">{t('mall.trialPrice')}</span>
                   <span className="muted small" style={{ marginLeft: 'auto' }}>{t('mall.trialCta')}</span>
@@ -117,7 +159,7 @@ export default function ShopPage(_props: PageProps) {
                     {g.title}
                     {g.id === 8 && <span className="pcard__tag">{t('mall.recommend')}</span>}
                   </div>
-                  <div className="pcard__dc">{g.description}</div>
+                  <FeatureLines text={FEAT_KEY_BY_ID[g.id] ? t(FEAT_KEY_BY_ID[g.id]) : g.description} />
                   <div className="pcard__rw">
                     <span className="pcard__pr">${Number(g.price).toFixed(2)}</span>
                     <button

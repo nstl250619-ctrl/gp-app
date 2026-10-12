@@ -85,8 +85,8 @@ export const zh = {
   },
   redeem: {
     title: '兑换',
-    subtitle: '输入兑换码 · 立即到账（试用码自动激活 48h 订阅）',
-    trialHint: '试用额度已到账，48 小时内有效',
+    subtitle: '输入兑换码 · 立即到账（试用码自动激活 24h 订阅）',
+    trialHint: '试用额度已到账，24 小时内有效',
     codeLabel: '兑换码',
     codePlaceholder: '粘贴你的兑换码',
     codeHelp: '兑换码是「字母和数字 + 连字符」，请完整粘贴，别漏掉中间的连字符。兑换在中转站核销，额度立即到账。',

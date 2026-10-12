@@ -4,7 +4,7 @@ import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { RedemptionRecord, RedeemResult } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
-import { formatUnix } from '@/utils/time';
+import { formatDateTime, formatUnix } from '@/utils/time';
 import { fmtUsd } from '@/utils/fmt';
 
 export default function RedeemPage(_props: PageProps) {
@@ -82,7 +82,7 @@ export default function RedeemPage(_props: PageProps) {
                 {r.expiresAt === 0
                   ? t('redeem.neverExpires')
                   : r.expiresAt != null
-                    ? `${t('redeem.expiresAt')} ${formatUnix(r.expiresAt)}`
+                    ? `${t('redeem.expiresAt')} ${formatDateTime(r.expiresAt)}`
                     : ''}
               </span>
               <span>{formatUnix(r.createdAt)}</span>
