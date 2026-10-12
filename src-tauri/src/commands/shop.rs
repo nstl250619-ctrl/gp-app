@@ -27,10 +27,22 @@ pub async fn shop_product_detail(id: i64) -> CommandResult<ProductDetail> {
     respond(services::shop::gateway_product_detail(id).await)
 }
 
-/// 余额直购下单（网关 /api/orders，卡池自动发货兑换码）。
+/// 余额直购下单（稳定商品 key → 网关映射，卡池自动发货兑换码）。
 #[tauri::command]
-pub async fn shop_buy_order(goods_id: i64, sku_id: i64) -> CommandResult<BuyResult> {
-    respond(services::shop::gateway_buy_order(goods_id, sku_id, 1).await)
+pub async fn shop_buy_order(product_key: String) -> CommandResult<BuyResult> {
+    respond(services::shop::gateway_buy_by_key(&product_key).await)
+}
+
+/// 充值下单（¥ 实付 + 支付渠道 alipay/wxpay），返回支付中转页。
+#[tauri::command]
+pub async fn shop_topup_create(amount_cny: String, channel: String) -> CommandResult<crate::services::shop::TopupOrder> {
+    respond(services::shop::gateway_topup_create(&amount_cny, &channel).await)
+}
+
+/// 充值订单支付状态轮询。
+#[tauri::command]
+pub async fn shop_topup_status(order_id: String) -> CommandResult<crate::services::shop::TopupStatus> {
+    respond(services::shop::gateway_topup_status(&order_id).await)
 }
 
 /// 商城状态（真实探测：能建立会话即已上线）。

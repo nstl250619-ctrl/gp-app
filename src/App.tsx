@@ -63,6 +63,29 @@ export default function App() {
     invokeCommand<InstanceCapability>('instance.probe', {}).then(setProbe).catch(() => {});
   }, []);
 
+  // 持续探测循环：启动瞬间探测失败（网络抖动/DNS/TLS 慢）会永远显示「不可达」，
+  // 失败后 15s 自动重试直至恢复；成功后降频 5min 保活探测。状态栏点击可立即重试。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = async () => {
+      try {
+        const cap = await invokeCommand<InstanceCapability>('instance.probe', {});
+        if (cancelled) return;
+        setProbe(cap);
+        timer = setTimeout(run, cap.reachable ? 5 * 60 * 1000 : 15 * 1000);
+      } catch {
+        if (cancelled) return;
+        timer = setTimeout(run, 15 * 1000);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   // 启动即探测登录态
   useEffect(() => {
     invokeCommand<AppStatus>('app.status', {})
@@ -163,7 +186,11 @@ export default function App() {
       </main>
 
       <footer className="statusbar">
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <span
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', cursor: 'pointer' }}
+          onClick={refreshProbe}
+          title={t('statusbar.probeRetry')}
+        >
           <span className={`dot ${probeState === 'ok' ? 'dot--ok' : probeState === 'fail' ? 'dot--warn' : ''}`} />
           {probeText}
         </span>

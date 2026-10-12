@@ -7,6 +7,14 @@ import { t } from '@/i18n';
 import { formatDateTime, formatUnix } from '@/utils/time';
 import { fmtUsd } from '@/utils/fmt';
 
+// 订阅套餐 id → 激活提示文案 key
+const PLAN_LABEL: Record<number, string> = {
+  2: 'redeem.planTrial',
+  3: 'redeem.planWeekly',
+  4: 'redeem.planMonthly',
+  5: 'redeem.planDaily',
+};
+
 export default function RedeemPage(_props: PageProps) {
   const [code, setCode] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
@@ -30,9 +38,10 @@ export default function RedeemPage(_props: PageProps) {
     setOkMsg(null);
     try {
       const r = await invokeCommand<RedeemResult>('redeem.redeem', { code });
+      const planKey = r.planId ? PLAN_LABEL[r.planId] : null;
       setOkMsg(
-        r.subscriptionActive
-          ? `${t('redeem.trialHint')}（+${fmtUsd(r.grantedUsd)}）`
+        r.subscriptionActive && planKey
+          ? `${t(planKey)}（+${fmtUsd(r.grantedUsd)}）`
           : `${t('redeem.success')}（+${fmtUsd(r.grantedUsd)}）`,
       );
       setCode('');

@@ -64,8 +64,10 @@ pub struct RedeemResult {
     pub quota_granted: i64,
     /// USD 计量（与 new-api 一致）：quota / 500000
     pub granted_usd: f64,
-    /// 是否触发 48h 试用订阅自动购买（尝鲜版引流码命中 TRIAL_QUOTA 面额）。
+    /// 是否触发订阅自动购买（按兑换码套餐名映射）。
     pub subscription_active: bool,
+    /// 激活的订阅套餐 id（2=尝鲜 3=周卡 4=月卡 5=日卡；None=未激活订阅）。
+    pub plan_id: Option<i64>,
 }
 
 fn http() -> reqwest::Client {
@@ -164,9 +166,12 @@ pub async fn status() -> ShopStatus {
     }
 }
 
-/// 生成 SSO 内嵌地址（方案 A）：每次静默重登 Shop 铸**新** session_token，
-/// 兼容 Shop 侧"一次性 token"的最严格安全模式。
+/// 生成 SSO 内嵌地址（方案 A）：复用现有登录态 token（避免每次点击商品卡都重登录 Shop），
+/// 仅在无 token 时才静默登录铸新 token。SSO 端点已改为可复用（限流 10/min 防滥用）。
 pub async fn sso_url() -> AppResult<String> {
+    if let Some(token) = shop_auth_token() {
+        return Ok(format!("{}/api/sso?session_token={}", config::SHOP_BASE_URL, token));
+    }
     let identifier = credential::get(config::CREDENTIAL_ACCOUNT_EMAIL)?
         .or_else(|| credential::get(config::CREDENTIAL_ACCOUNT_USERNAME).ok().flatten())
         .ok_or_else(|| AppError::Other("请先在总览登录账号".into()))?;
@@ -720,6 +725,8 @@ pub async fn gateway_redeem(code: &str) -> AppResult<RedeemResult> {
     struct SubscriptionField {
         #[serde(default)]
         active: bool,
+        #[serde(default)]
+        plan_id: Option<i64>,
     }
     #[derive(Deserialize)]
     struct RedeemData {
@@ -732,7 +739,8 @@ pub async fn gateway_redeem(code: &str) -> AppResult<RedeemResult> {
     Ok(RedeemResult {
         quota_granted: d.quota,
         granted_usd: config::quota_to_usd(d.quota),
-        subscription_active: d.subscription.map(|s| s.active).unwrap_or(false),
+        subscription_active: d.subscription.as_ref().map(|s| s.active).unwrap_or(false),
+        plan_id: d.subscription.and_then(|s| s.plan_id),
     })
 }
 
@@ -797,6 +805,15 @@ pub struct BuyResult {
     pub status: String,
     #[serde(default, alias = "delivery_text")]
     pub delivery_text: String,
+    /// 一键购买自动化：网关是否已就地核销兑换码
+    #[serde(default)]
+    pub redeemed: bool,
+    /// 自动激活的订阅套餐 id（2=尝鲜 3=周卡 4=月卡 5=日卡；激活失败为 None）
+    #[serde(default, alias = "plan_id")]
+    pub plan_id: Option<i64>,
+    /// 自动核销到账额度（USD）
+    #[serde(default, alias = "granted_usd")]
+    pub granted_usd: f64,
 }
 
 /// 工具商城展示的商品白名单（Shop 后台 goods id）。
@@ -827,6 +844,12 @@ pub async fn gateway_product_detail(id: i64) -> AppResult<ProductDetail> {
 pub async fn gateway_buy_order(goods_id: i64, sku_id: i64, quantity: i64) -> AppResult<BuyResult> {
     gateway_post("/api/orders", json!({ "goods_id": goods_id, "sku_id": sku_id, "quantity": quantity }))
         .await
+}
+
+/// 余额直购下单（稳定商品 key → 网关映射 goods/sku，云端权威扣款发货）。
+/// 前端静态商品卡不依赖商品列表回传，仅购买时按 key 下单。
+pub async fn gateway_buy_by_key(product_key: &str) -> AppResult<BuyResult> {
+    gateway_post("/api/orders", json!({ "product_key": product_key })).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -864,6 +887,50 @@ pub async fn gateway_orders() -> AppResult<Vec<ShopOrderItem>> {
         #[serde(default)]
         items: Vec<ShopOrderItem>,
     }
-    let d: OrdersData = gateway_get("/api/user/orders?page=1&page_size=5").await?;
+    let d: OrdersData = gateway_get("/api/user/orders?page=1&page_size=10").await?;
     Ok(d.items)
+}
+
+// ---- 钱包充值（文档 7.7/7.8）：商城充值接口，经网关 wallet/topup/order ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopupOrder {
+    #[serde(alias = "order_id")]
+    pub order_id: String,
+    /// 支付中转页（系统浏览器打开扫码/跳转）
+    #[serde(alias = "pay_url")]
+    pub pay_url: String,
+    /// 真二维码内容（weixin:// / alipays:// 等），前端直接渲染
+    #[serde(default, alias = "code_url")]
+    pub code_url: String,
+    #[serde(alias = "expires_at")]
+    pub expires_at: i64,
+}
+
+/// 充值下单（¥ 实付金额字符串 + 渠道 alipay/wxpay），返回支付中转页。
+pub async fn gateway_topup_create(amount_cny: &str, channel: &str) -> AppResult<TopupOrder> {
+    gateway_post(
+        "/api/wallet/topup/order",
+        json!({ "amount": amount_cny, "pay_channel": channel }),
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopupStatus {
+    #[serde(alias = "order_id")]
+    pub order_id: String,
+    /// pending / paid / expired
+    pub status: String,
+    /// ¥ 实付
+    pub amount: String,
+    #[serde(alias = "paid_at")]
+    pub paid_at: Option<i64>,
+}
+
+/// 充值订单支付状态轮询。
+pub async fn gateway_topup_status(order_id: &str) -> AppResult<TopupStatus> {
+    gateway_get(&format!("/api/wallet/topup/order/{}", order_id)).await
 }

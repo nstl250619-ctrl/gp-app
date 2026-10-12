@@ -168,6 +168,12 @@ export interface BuyResult {
   amount: number;
   status: string;
   deliveryText: string;
+  /** 一键购买：网关是否已自动核销兑换码 */
+  redeemed: boolean;
+  /** 自动激活的订阅套餐 id（2=尝鲜 3=周卡 4=月卡 5=日卡） */
+  planId?: number | null;
+  /** 自动核销到账额度（USD） */
+  grantedUsd: number;
 }
 
 export interface OrderCode {
@@ -199,10 +205,30 @@ export interface WalletSummary {
   balanceYuan: string;
 }
 
+export interface TopupOrder {
+  orderId: string;
+  /** 支付中转页（系统浏览器打开扫码/跳转） */
+  payUrl: string;
+  /** 真二维码内容（weixin:// / alipays:// 等），前端直接渲染 */
+  codeUrl?: string;
+  expiresAt: number;
+}
+
+export interface TopupStatus {
+  orderId: string;
+  /** pending / paid / expired */
+  status: string;
+  /** ¥ 实付 */
+  amount: string;
+  paidAt?: number | null;
+}
+
 export interface RedeemResult {
   quotaGranted: number;
   grantedUsd: number;
   subscriptionActive: boolean;
+  /** 激活的订阅套餐 id（2=尝鲜 3=周卡 4=月卡 5=日卡） */
+  planId?: number | null;
 }
 
 export interface DetectResult {

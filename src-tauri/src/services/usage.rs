@@ -84,7 +84,10 @@ pub async fn redemption_records() -> AppResult<Vec<RedemptionRecord>> {
     // 走网关 /api/user/redemptions（type=1 日志代理）
     let items = shop::gateway_redemptions().await?;
     let mut out = Vec::new();
-    for l in items.into_iter().filter(|l| !l.content.is_empty()) {
+    // 仅保留兑换码核销日志（「通过兑换码充值 ＄X ...」）。
+    // type=1 还包含「使用余额购买订阅成功」等扣费日志（content 无 ＄ 金额模式，
+    // 解析为 None 会显示成空「+」），业务上不属于兑换记录，过滤掉。
+    for l in items.into_iter().filter(|l| l.content.contains("兑换码")) {
         let amount_usd = parse_amount_usd(&l.content);
         out.push(RedemptionRecord {
             created_at: l.created_at,

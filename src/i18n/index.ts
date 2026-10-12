@@ -16,6 +16,7 @@ export const zh = {
     probeUnknown: '中转站未探测',
     probeOk: '中转站已连接',
     probeFail: '中转站不可达',
+    probeRetry: '点击重新探测',
   },
   time: {
     justNow: '刚刚',
@@ -85,8 +86,11 @@ export const zh = {
   },
   redeem: {
     title: '兑换',
-    subtitle: '输入兑换码 · 立即到账（试用码自动激活 24h 订阅）',
-    trialHint: '试用额度已到账，24 小时内有效',
+    subtitle: '输入兑换码 · 立即到账（自动激活对应订阅套餐）',
+    planTrial: '试用订阅已激活',
+    planWeekly: '周卡订阅已激活',
+    planMonthly: '月卡订阅已激活',
+    planDaily: '日卡订阅已激活',
     codeLabel: '兑换码',
     codePlaceholder: '粘贴你的兑换码',
     codeHelp: '兑换码是「字母和数字 + 连字符」，请完整粘贴，别漏掉中间的连字符。兑换在中转站核销，额度立即到账。',

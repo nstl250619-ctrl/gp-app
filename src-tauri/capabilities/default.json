@@ -46,6 +46,8 @@
     "allow-shop-product-detail",
     "allow-shop-buy-order",
     "allow-shop-my-orders",
+    "allow-shop-topup-create",
+    "allow-shop-topup-status",
     "allow-redeem-redeem"
   ]
 }
