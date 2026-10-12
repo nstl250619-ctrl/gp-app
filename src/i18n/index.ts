@@ -275,6 +275,7 @@ export const zh = {
     autoUpdateOn: '开启：启动时自动检测，发现新版本会提示你确认后更新',
     autoUpdateOff: '关闭：不自动检测，仅在手动检查时提示',
     currentVersion: '当前版本',
+    checkLatest: '检查最新版本',
     checkUpdate: '检查更新',
     checking: '检查中…',
     latest: '已是最新版本',

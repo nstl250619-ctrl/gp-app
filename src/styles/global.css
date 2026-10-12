@@ -1201,6 +1201,40 @@ body {
   margin-bottom: 16px;
 }
 
+/* 设置页版本行：检查更新 / 立即更新按钮 */
+.upd-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+.upd-btn:hover {
+  text-decoration: underline;
+}
+.upd-btn:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+}
+.upd-btn--primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.upd-btn--primary:hover {
+  text-decoration: none;
+  filter: brightness(1.08);
+}
+.upd-btn--primary:disabled {
+  opacity: 0.7;
+}
+
 .balbar__recharge {
   margin-left: auto;
   padding: 5px 16px;

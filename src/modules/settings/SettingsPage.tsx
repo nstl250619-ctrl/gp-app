@@ -1,15 +1,22 @@
 // 设置页（§八 设计稿同款）：账号信息卡 + 云端服务/自动更新/版本/退出登录。
-import { useCallback, useEffect, useState } from 'react';
-import { invokeCommand } from '@/services/ipc';
+// 版本行内置「检查最新版本」按钮：有新版本变「立即更新 vX.X.X」，点击在线更新。
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { AppStatus, InstanceCapability } from '@/types/ipc';
 import { t } from '@/i18n';
-import { isAutoUpdateOn, setAutoUpdate } from '@/utils/updater';
+import { checkForUpdate, downloadAndInstall, isAutoUpdateOn, setAutoUpdate } from '@/utils/updater';
+
+type UpdUi = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading';
 
 export default function SettingsPage() {
   const [app, setApp] = useState<AppStatus | null>(null);
   const [inst, setInst] = useState<InstanceCapability | null>(null);
   const [version, setVersion] = useState('');
   const [auto, setAuto] = useState(false);
+  const [updState, setUpdState] = useState<UpdUi>('idle');
+  const [updVer, setUpdVer] = useState('');
+  const [updErr, setUpdErr] = useState<string | null>(null);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => {
     invokeCommand<AppStatus>('app.status', {}).then(setApp).catch(() => {});
@@ -22,10 +29,48 @@ export default function SettingsPage() {
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion().then(setVersion).catch(() => {}));
   }, [refresh]);
 
+  // 组件卸载时清理「已是最新」的恢复定时器
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+  }, []);
+
   const toggleAuto = () => {
     const next = !auto;
     setAuto(next);
     setAutoUpdate(next);
+  };
+
+  // 手动检查更新：有新版本 → 按钮变「立即更新 vX.X.X」；无 → 短暂显示「已是最新版本」
+  const checkUpdate = async () => {
+    if (updState === 'checking' || updState === 'downloading') return;
+    setUpdErr(null);
+    setUpdState('checking');
+    try {
+      const u = await checkForUpdate();
+      if (u) {
+        setUpdVer(u.version);
+        setUpdState('available');
+      } else {
+        setUpdState('uptodate');
+        if (resetTimer.current) clearTimeout(resetTimer.current);
+        resetTimer.current = setTimeout(() => setUpdState('idle'), 2500);
+      }
+    } catch (e) {
+      setUpdErr(errorMessage(e));
+      setUpdState('idle');
+    }
+  };
+
+  // 在线更新：下载安装并自动重启
+  const doUpdate = async () => {
+    setUpdErr(null);
+    setUpdState('downloading');
+    try {
+      await downloadAndInstall();
+    } catch (e) {
+      setUpdErr(errorMessage(e));
+      setUpdState('available');
+    }
   };
 
   const logout = async () => {
@@ -80,8 +125,37 @@ export default function SettingsPage() {
         </div>
         <div className="record-row">
           <span className="muted">{t('settings.currentVersion')}</span>
-          <span>v{version || '0.1.0'}</span>
+          {updState === 'available' || updState === 'downloading' ? (
+            <button
+              type="button"
+              className="upd-btn upd-btn--primary"
+              onClick={doUpdate}
+              disabled={updState === 'downloading'}
+            >
+              {updState === 'downloading' ? t('settings.downloading') : `${t('settings.updateNow')} v${updVer}`}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="upd-btn"
+              onClick={checkUpdate}
+              disabled={updState === 'checking'}
+            >
+              {updState === 'checking'
+                ? t('settings.checking')
+                : updState === 'uptodate'
+                  ? t('settings.latest')
+                  : t('settings.checkLatest')}
+            </button>
+          )}
+          <span className="record-row__meta">v{version || '0.1.0'}</span>
         </div>
+        {updErr && (
+          <div className="record-row" style={{ marginTop: -6 }}>
+            <span />
+            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{updErr}</span>
+          </div>
+        )}
         <div className="record-row">
           <span className="muted">{t('settings.logout')}</span>
           <button type="button" className="logout-link" onClick={logout}>{t('settings.logoutAction')}</button>
