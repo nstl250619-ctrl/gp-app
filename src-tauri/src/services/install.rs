@@ -123,15 +123,34 @@ fn apply_locked(
         save_override(data_dir, &target, &p.display().to_string())?;
     }
 
+    let mut records = load_records(data_dir)?;
+
+    // 托管态再次导入不产生新备份（adapter 跳过）→ 继承最近一次「GP 介入前」的还原点，
+    // 保证任意一条记录的「还原」都回到 GP 写入前的原始配置。
+    let mut backup_path = result.backup_path.clone();
+    if backup_path.is_none() {
+        backup_path = records
+            .iter()
+            .rev()
+            .find(|r| r.target == target && r.status != "rolled_back")
+            .and_then(|r| r.backup_path.clone());
+    }
+
+    // 备份镜像到 GP 数据目录：目标同目录的 .bak 文件可能被客户端应用清理（实测 Codex 会清 .codex 下陌生文件）。
+    if let Some(bp) = &backup_path {
+        mirror_backup(Path::new(bp), data_dir);
+    }
+
     let record = InstallRecord {
         id: uuid::Uuid::new_v4().to_string(),
         target,
         target_path: Some(result.path.clone()),
         created_at: chrono::Local::now().to_rfc3339(),
         status: result.status.clone(),
-        backup_path: result.backup_path.clone(),
+        backup_path,
     };
-    append_record(data_dir, record)?;
+    records.push(record);
+    save_records(data_dir, &records)?;
 
     Ok(result)
 }
@@ -186,6 +205,23 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
     let backup = rec.backup_path.clone().ok_or_else(|| AppError::RollbackFailed("该记录无备份".into()))?;
     let adapter = adapters::find_adapter(&rec.target).ok_or(AppError::TargetNotFound)?;
 
+    // 同目录备份可能已被客户端应用清理 → 回退到 GP 数据目录里的镜像副本。
+    let backup_path = PathBuf::from(&backup);
+    let backup_path = if backup_path.exists() {
+        backup_path
+    } else {
+        let mirror = backup_mirrors_dir(data_dir).join(
+            backup_path.file_name().ok_or_else(|| AppError::RollbackFailed("备份路径非法".into()))?,
+        );
+        if mirror.exists() {
+            mirror
+        } else {
+            return Err(AppError::RollbackFailed(format!(
+                "备份文件已丢失（可能被客户端应用清理）：{}", backup
+            )));
+        }
+    };
+
     // 目标路径：优先记录的原路径（修 H2：防多版本/移动后把 A 的备份写进 B）；
     // 旧记录无 target_path 时回退当前探测结果。
     let target_path = rec
@@ -202,7 +238,7 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
         })
         .ok_or_else(|| AppError::RollbackFailed("找不到目标配置路径".into()))?;
 
-    adapter.rollback(Path::new(&backup), &target_path)?;
+    adapter.rollback(&backup_path, &target_path)?;
 
     let mut records = records;
     if let Some(r) = records.iter_mut().find(|r| r.id == record_id) {
@@ -211,8 +247,26 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
     save_records(data_dir, &records)
 }
 
+/// 操作记录：最新在最前（产品裁决 2026-10-13）。
 pub fn history(data_dir: &PathBuf) -> AppResult<Vec<InstallRecord>> {
-    load_records(data_dir)
+    let mut records = load_records(data_dir)?;
+    records.reverse();
+    Ok(records)
+}
+
+/// 备份镜像目录：<data_dir>/backups/。
+fn backup_mirrors_dir(data_dir: &PathBuf) -> PathBuf {
+    data_dir.join("backups")
+}
+
+/// 把同目录备份复制一份到 GP 数据目录（尽力而为，失败不阻断导入）。
+fn mirror_backup(backup: &Path, data_dir: &PathBuf) {
+    let Some(name) = backup.file_name() else { return };
+    let dir = backup_mirrors_dir(data_dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = std::fs::copy(backup, dir.join(name));
 }
 
 fn lock() -> AppResult<std::sync::MutexGuard<'static, ()>> {
@@ -240,12 +294,6 @@ fn save_records(data_dir: &PathBuf, records: &[InstallRecord]) -> AppResult<()> 
     let content = serde_json::to_string_pretty(records)?;
     fs_atomic::atomic_write(&records_path(data_dir), &content)?;
     Ok(())
-}
-
-fn append_record(data_dir: &PathBuf, record: InstallRecord) -> AppResult<()> {
-    let mut records = load_records(data_dir)?;
-    records.push(record);
-    save_records(data_dir, &records)
 }
 
 // ---- 用户手动指定的配置路径（分身/重命名场景）：按 target 持久化到 path_overrides.json ----

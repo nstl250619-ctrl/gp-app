@@ -134,11 +134,14 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
             }
         }
 
-        // 备份失败即中止（AC-08 / §3.1-7）
-        let backup = if path.exists() { Some(fs_atomic::backup(&path)?) } else { None };
-
         let raw = fs_atomic::read_string(&path)?;
         let current = normalize(&raw);
+
+        // 已是 GP 托管态时不新建备份：还原点必须是「GP 介入前」的原始配置，
+        // 否则连续导入会让「还原」只回退到上一次 GP 写入（链式备份污染）。
+        let managed_now = current.models.iter().any(is_managed_entry);
+        let backup = if path.exists() && !managed_now { Some(fs_atomic::backup(&path)?) } else { None };
+
         let (related, _warnings) = resolve_related(&input.model_ids);
         let entries: Vec<Value> = seeds.iter().map(|s| build_model_entry(input, s, &related)).collect();
         let merged = merge(&current, entries);

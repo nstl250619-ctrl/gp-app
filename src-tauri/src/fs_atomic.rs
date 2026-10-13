@@ -13,12 +13,17 @@ pub fn read_string(path: &Path) -> AppResult<String> {
 }
 
 /// 备份为 `<原名>.bak.<时间戳>`（§11.5 / AC-08）。备份失败即中止。
+/// 注意保留原扩展名（with_extension 会把 config.toml 变成 config.json.bak…，已被 Codex 当陌生文件清理）。
 pub fn backup(path: &Path) -> AppResult<PathBuf> {
     if !path.exists() {
         return Err(AppError::BackupFailed(format!("文件不存在：{}", path.display())));
     }
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let bak = path.with_extension(format!("json.bak.{}", ts));
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::BackupFailed(format!("路径非法：{}", path.display())))?;
+    let bak = path.with_file_name(format!("{}.bak.{}", name, ts));
     std::fs::copy(path, &bak).map_err(|e| AppError::BackupFailed(e.to_string()))?;
     Ok(bak)
 }

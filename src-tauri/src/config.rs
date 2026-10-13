@@ -56,6 +56,12 @@ pub const REASONING_SUPPORTED_EFFORTS: &[&str] = &["low", "high", "xhigh"];
 pub const WORKBUDDY_CONFIG_FILE: &str = "models.json";
 pub const WORKBUDDY_DIR_ENV: &str = "WORKBUDDY_CONFIG_DIR";
 pub const CODEBUDDY_DIR_ENV: &str = "CODEBUDDY_CONFIG_DIR";
+/// Codex CLI：配置根 = $CODEX_HOME（官方 env），配置文件 config.toml。
+pub const CODEX_CONFIG_FILE: &str = "config.toml";
+pub const CODEX_DIR_ENV: &str = "CODEX_HOME";
+/// Claude Code：$CLAUDE_CONFIG_DIR/settings.json → ~/.claude/settings.json。
+pub const CLAUDE_CONFIG_FILE: &str = "settings.json";
+pub const CLAUDE_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 // ⚠️ Unix-only。Windows 上 0o600 无效，须用 ACL（icacls）收紧，见 fs_atomic::secure_permissions。
 #[cfg(unix)]
@@ -89,28 +95,38 @@ pub const DEFAULT_MODEL_IDS: &[&str] = &[
 
 /// 配置落点候选（§11.1 探测优先级）：环境变量覆盖优先，其次用户主目录约定位置。
 /// Windows 用 USERPROFILE 而非 HOME（§21.2 #2）。两平台各自独立，绝不互为 fallback。
-fn candidate_paths(env_key: &str, dot_dir: &str) -> Vec<PathBuf> {
+fn candidate_paths(env_key: &str, dot_dir: &str, file: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(dir) = std::env::var(env_key) {
         let dir = dir.trim().to_string();
         if !dir.is_empty() {
-            out.push(PathBuf::from(dir).join(WORKBUDDY_CONFIG_FILE));
+            out.push(PathBuf::from(dir).join(file));
         }
     }
     if let Some(home) = home_dir() {
-        out.push(home.join(dot_dir).join(WORKBUDDY_CONFIG_FILE));
+        out.push(home.join(dot_dir).join(file));
     }
     out
 }
 
 /// WorkBuddy：$WORKBUDDY_CONFIG_DIR/models.json → ~/.workbuddy/models.json。
 pub fn workbuddy_candidate_paths() -> Vec<PathBuf> {
-    candidate_paths(WORKBUDDY_DIR_ENV, ".workbuddy")
+    candidate_paths(WORKBUDDY_DIR_ENV, ".workbuddy", WORKBUDDY_CONFIG_FILE)
 }
 
 /// CodeBuddy：$CODEBUDDY_CONFIG_DIR/models.json → ~/.codebuddy/models.json。
 pub fn codebuddy_candidate_paths() -> Vec<PathBuf> {
-    candidate_paths(CODEBUDDY_DIR_ENV, ".codebuddy")
+    candidate_paths(CODEBUDDY_DIR_ENV, ".codebuddy", WORKBUDDY_CONFIG_FILE)
+}
+
+/// Codex：$CODEX_HOME/config.toml → ~/.codex/config.toml。
+pub fn codex_candidate_paths() -> Vec<PathBuf> {
+    candidate_paths(CODEX_DIR_ENV, ".codex", CODEX_CONFIG_FILE)
+}
+
+/// Claude Code：$CLAUDE_CONFIG_DIR/settings.json → ~/.claude/settings.json。
+pub fn claude_candidate_paths() -> Vec<PathBuf> {
+    candidate_paths(CLAUDE_DIR_ENV, ".claude", CLAUDE_CONFIG_FILE)
 }
 
 fn home_dir() -> Option<PathBuf> {

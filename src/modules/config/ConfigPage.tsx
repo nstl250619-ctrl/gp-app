@@ -8,11 +8,16 @@ import { t } from '@/i18n';
 import ModelPicker from './ModelPicker';
 import IdeTabs, { type TabKey, WRITABLE } from './IdeTabs';
 
+// Single-model agents (Codex / Claude Code): only one default model is imported.
+const SINGLE_MODEL = new Set<TabKey>(['codex', 'claude']);
+
 export default function ConfigPage({ onNavigate }: PageProps) {
   const [tab, setTab] = useState<TabKey>('workbuddy');
   const [detect, setDetect] = useState<DetectResult | null>(null);
   const [detectAll, setDetectAll] = useState<DetectResult[]>([]);
   const [plan, setPlan] = useState<InstallPlan | null>(null);
+  const [planState, setPlanState] = useState<'loading' | 'ready' | 'keyMissing' | 'error'>('loading');
+  const [planError, setPlanError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,30 +31,40 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [baseUrl, setBaseUrl] = useState('https://api.greenpool.cn');
   const baseUrlRef = useRef('https://api.greenpool.cn');
 
+  const isSingle = SINGLE_MODEL.has(tab);
+
   const loadPlan = useCallback((ids: string[]) => {
     if (ids.length === 0) {
       setPlan(null);
+      setPlanState('ready');
       return;
     }
+    setPlanState('loading');
+    setPlanError(null);
     const fetchPlan = () =>
       invokeCommand<InstallPlan>('install.plan', {
         target: tab, modelIds: ids, customPath: pathDraftRef.current || undefined, baseUrl: baseUrlRef.current,
       });
     fetchPlan()
-      .then(setPlan)
+      .then((p) => { setPlan(p); setPlanState('ready'); })
       .catch(async (e) => {
         // Key missing fallback (overview page removed; login auto-setup may have been skipped
         // for already-logged-in sessions): generate a key once, then retry the plan.
         if (isIpcError(e) && e.code === 'KEY_MISSING') {
           try {
             await invokeCommand('account.setupKey', {});
-            fetchPlan().then(setPlan).catch(() => setPlan(null));
+            fetchPlan()
+              .then((p) => { setPlan(p); setPlanState('ready'); })
+              .catch(() => setPlanState('keyMissing'));
             return;
           } catch {
-            /* setup failed: fall through to empty plan */
+            setPlanState('keyMissing'); // setup failed: show key-missing hint, no silent swallow
+            return;
           }
         }
         setPlan(null);
+        setPlanError(errorMessage(e));
+        setPlanState('error');
       });
   }, [tab]);
 
@@ -70,13 +85,15 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       .then((list) => {
         setAvailable(list);
         if (!modelsDirty.current) {
-          selectedRef.current = list;
-          setSelected(list);
-          loadPlan(list);
+          // Single-model targets default to the first (primary) model only.
+          const init = SINGLE_MODEL.has(tab) ? list.slice(0, 1) : list;
+          selectedRef.current = init;
+          setSelected(init);
+          loadPlan(init);
         }
       })
       .catch(async (e) => {
-        // 密钥缺失兜底（总览页已移除，登录自动建 key 失败时在此补救）：自动生成后重试一次
+        // Key-missing fallback: auto-create the key once, then refetch model list.
         if (isIpcError(e) && e.code === 'KEY_MISSING') {
           try {
             await invokeCommand('account.setupKey', {});
@@ -84,14 +101,15 @@ export default function ConfigPage({ onNavigate }: PageProps) {
               .then((list) => {
                 setAvailable(list);
                 if (!modelsDirty.current) {
-                  selectedRef.current = list;
-                  setSelected(list);
-                  loadPlan(list);
+                  const init = SINGLE_MODEL.has(tab) ? list.slice(0, 1) : list;
+                  selectedRef.current = init;
+                  setSelected(init);
+                  loadPlan(init);
                 }
               })
               .catch(() => {});
           } catch {
-            /* setup failed: keep needKeyFirst hint */
+            setPlanState('keyMissing'); // surface instead of silent swallow
           }
         }
       });
@@ -126,9 +144,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
 
   const toggleModel = (id: string) => {
     modelsDirty.current = true;
-    const next = selectedRef.current.includes(id)
-      ? selectedRef.current.filter((x) => x !== id)
-      : [...selectedRef.current, id];
+    // Single-model targets behave as radio: picking one replaces the selection.
+    const next = isSingle
+      ? [id]
+      : selectedRef.current.includes(id)
+        ? selectedRef.current.filter((x) => x !== id)
+        : [...selectedRef.current, id];
     selectedRef.current = next;
     setSelected(next);
     loadPlan(next);
@@ -136,9 +157,11 @@ export default function ConfigPage({ onNavigate }: PageProps) {
 
   const selectAllModels = () => {
     modelsDirty.current = true;
-    selectedRef.current = available;
-    setSelected(available);
-    loadPlan(available);
+    // "All" on a single-model target means the primary model.
+    const next = isSingle ? available.slice(0, 1) : available;
+    selectedRef.current = next;
+    setSelected(next);
+    loadPlan(next);
   };
 
   const clearModels = () => {
@@ -146,6 +169,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     selectedRef.current = [];
     setSelected([]);
     setPlan(null);
+    setPlanState('ready');
   };
 
   const pickTab = (key: TabKey) => {
@@ -153,6 +177,13 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     pathDirty.current = false;
     modelsDirty.current = false;
+    // Switching to a single-model target resets selection to the primary model.
+    if (SINGLE_MODEL.has(key)) {
+      const init = available.slice(0, 1);
+      selectedRef.current = init;
+      setSelected(init);
+      loadPlan(init);
+    }
     setMsg(!WRITABLE.has(key) ? t('config.tabUnavailable') : null);
   };
 
@@ -208,6 +239,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           <ModelPicker
             available={available}
             selected={selected}
+            single={isSingle}
             onToggle={toggleModel}
             onSelectAll={selectAllModels}
             onClear={clearModels}
@@ -227,9 +259,13 @@ export default function ConfigPage({ onNavigate }: PageProps) {
                 </tbody>
               </table>
             </>
-          ) : (
+          ) : planState === 'loading' ? (
+            <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.planLoading')}</p>
+          ) : planState === 'keyMissing' ? (
             <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.needKeyFirst')}</p>
-          )}
+          ) : planState === 'error' ? (
+            <p className="muted" style={{ marginTop: 'var(--space-3)', color: 'var(--danger)' }}>{planError}</p>
+          ) : null}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
             <button type="button" className="btn btn-primary" disabled={busy || !pathDraft.trim() || selected.length === 0} onClick={apply}>

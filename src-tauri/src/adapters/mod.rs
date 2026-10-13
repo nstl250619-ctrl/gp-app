@@ -1,6 +1,8 @@
 //! 配置适配器注册表（ADR-002：六能力接口 detect/read_current/plan/backup/apply/rollback）。
-//! WorkBuddy + CodeBuddy 可写；OpenClaw/Hermes 留到 P1 仅探测（§11.7）。
+//! WorkBuddy + CodeBuddy + Codex + Claude Code 可写。
 
+pub mod claude;
+pub mod codex;
 pub mod json_merge;
 pub mod models_template;
 pub mod types;
@@ -26,6 +28,8 @@ pub fn all_adapters() -> Vec<Box<dyn ConfigAdapter>> {
     vec![
         Box::new(workbuddy::ModelsJsonAdapter::workbuddy()),
         Box::new(workbuddy::ModelsJsonAdapter::codebuddy()),
+        Box::new(codex::CodexAdapter::new()),
+        Box::new(claude::ClaudeAdapter::new()),
     ]
 }
 

@@ -1,12 +1,12 @@
-// IDE 平台选择卡（§八 设计稿同款）：四张卡（缩写徽标 + 名称 + 状态行），待开发带角标。
+// IDE 平台选择卡（§八 设计稿同款）：四张卡（缩写徽标 + 名称 + 状态行）。
 import type { DetectResult } from '@/types/ipc';
 import { t } from '@/i18n';
 
-export type TabKey = 'workbuddy' | 'codebuddy' | 'openclaw' | 'hermes';
-export const TABS: TabKey[] = ['workbuddy', 'codebuddy', 'openclaw', 'hermes'];
-export const WRITABLE = new Set<TabKey>(['workbuddy', 'codebuddy']);
+export type TabKey = 'workbuddy' | 'codebuddy' | 'codex' | 'claude';
+export const TABS: TabKey[] = ['workbuddy', 'codebuddy', 'codex', 'claude'];
+export const WRITABLE = new Set<TabKey>(['workbuddy', 'codebuddy', 'codex', 'claude']);
 
-const ABBR: Record<TabKey, string> = { workbuddy: 'WB', codebuddy: 'CB', openclaw: 'OC', hermes: 'HM' };
+const ABBR: Record<TabKey, string> = { workbuddy: 'WB', codebuddy: 'CB', codex: 'CX', claude: 'CC' };
 
 interface Props {
   tab: TabKey;

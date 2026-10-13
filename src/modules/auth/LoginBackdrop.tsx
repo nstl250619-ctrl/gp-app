@@ -9,8 +9,8 @@ const NODES = [
   { abbr: 'WB', name: 'WorkBuddy', x: 240, y: 180, delay: '0s', dur: '10s' },
   { abbr: 'CB', name: 'CodeBuddy', x: 940, y: 150, delay: '1.4s', dur: '11s' },
   { abbr: 'CG', name: 'CodexGPT', x: 600, y: 150, delay: '2.8s', dur: '9s' },
-  { abbr: 'OC', name: 'OpenClaw', x: 1030, y: 480, delay: '4.2s', dur: '12s' },
-  { abbr: 'HM', name: 'Hermes', x: 210, y: 520, delay: '0.7s', dur: '10.5s' },
+  { abbr: 'CX', name: 'Codex', x: 1030, y: 480, delay: '4.2s', dur: '12s' },
+  { abbr: 'CC', name: 'Claude', x: 210, y: 520, delay: '0.7s', dur: '10.5s' },
   { abbr: 'CL', name: 'Claude', x: 320, y: 660, delay: '2.1s', dur: '11.5s' },
   { abbr: 'CU', name: 'Cursor', x: 880, y: 680, delay: '3.5s', dur: '9.5s' },
 ] as const;

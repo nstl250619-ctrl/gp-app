@@ -42,6 +42,7 @@ chrono = "=0.4.45"
 tokio = { version = "=1.53.2", features = ["rt-multi-thread", "macros", "time"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+toml_edit = "0.25.17"
 
 # 注：reqwest 0.13 起 TLS feature 名是 rustls（不是 rustls-tls），上方已用正确名。
 # tauri-plugin-updater / tauri-plugin-decoration 为二期/后续，骨架期先不引入。
