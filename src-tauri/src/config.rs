@@ -62,6 +62,9 @@ pub const CODEX_DIR_ENV: &str = "CODEX_HOME";
 /// Claude Code：$CLAUDE_CONFIG_DIR/settings.json → ~/.claude/settings.json。
 pub const CLAUDE_CONFIG_FILE: &str = "settings.json";
 pub const CLAUDE_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+/// Hermes：$HERMES_CONFIG_DIR/config.yaml → ~/.hermes/config.yaml。
+pub const HERMES_CONFIG_FILE: &str = "config.yaml";
+pub const HERMES_DIR_ENV: &str = "HERMES_CONFIG_DIR";
 
 // ⚠️ Unix-only。Windows 上 0o600 无效，须用 ACL（icacls）收紧，见 fs_atomic::secure_permissions。
 #[cfg(unix)]
@@ -127,6 +130,29 @@ pub fn codex_candidate_paths() -> Vec<PathBuf> {
 /// Claude Code：$CLAUDE_CONFIG_DIR/settings.json → ~/.claude/settings.json。
 pub fn claude_candidate_paths() -> Vec<PathBuf> {
     candidate_paths(CLAUDE_DIR_ENV, ".claude", CLAUDE_CONFIG_FILE)
+}
+
+/// OpenClaw：$OPENCLAW_CONFIG_DIR → ~/.openclaw/（openclaw.json 优先，models.json 兜底）。
+pub fn openclaw_candidate_paths() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(dir) = std::env::var("OPENCLAW_CONFIG_DIR") {
+        let dir = dir.trim().to_string();
+        if !dir.is_empty() {
+            let base = PathBuf::from(&dir);
+            out.push(base.join("openclaw.json"));
+            out.push(base.join("models.json"));
+        }
+    }
+    if let Some(home) = home_dir() {
+        out.push(home.join(".openclaw").join("openclaw.json"));
+        out.push(home.join(".openclaw").join("models.json"));
+    }
+    out
+}
+
+/// Hermes：$HERMES_CONFIG_DIR/config.yaml → ~/.hermes/config.yaml。
+pub fn hermes_candidate_paths() -> Vec<PathBuf> {
+    candidate_paths(HERMES_DIR_ENV, ".hermes", HERMES_CONFIG_FILE)
 }
 
 fn home_dir() -> Option<PathBuf> {

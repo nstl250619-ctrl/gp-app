@@ -127,6 +127,8 @@ export const zh = {
     tabCodebuddy: 'CodeBuddy',
     tabCodex: 'Codex',
     tabClaude: 'Claude Code',
+    tabOpenclaw: 'OpenClaw',
+    tabHermes: 'Hermes',
     tabUnavailable: '该目标暂不支持，敬请期待',
     soonSupport: '即将支持',
     soonDev: '待开发',

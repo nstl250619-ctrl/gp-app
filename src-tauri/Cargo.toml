@@ -1,6 +1,6 @@
 [package]
 name = "greenpool"
-version = "0.1.9"
+version = "0.2.0"
 description = "绿池 · GreenPool（GP）—— 一键打通中转站配置"
 edition = "2021"
 rust-version = "1.88"
@@ -43,6 +43,7 @@ tokio = { version = "=1.53.2", features = ["rt-multi-thread", "macros", "time"] 
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 toml_edit = "0.25.17"
+serde_yaml = "0.9.34"
 
 # 注：reqwest 0.13 起 TLS feature 名是 rustls（不是 rustls-tls），上方已用正确名。
 # tauri-plugin-updater / tauri-plugin-decoration 为二期/后续，骨架期先不引入。

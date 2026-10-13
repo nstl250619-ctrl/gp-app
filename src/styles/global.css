@@ -1072,9 +1072,50 @@ body {
 
 /* ============ IDE 平台选择卡（§八 设计稿同款） ============ */
 .ide-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .ide-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* 纯图标卡：图标居中放大，状态用角标圆点 */
+.ide-tab--icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 8px;
+  min-width: 0;
+}
+.ide-tab--icon .ide-tab__logo-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+.ide-tab__dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.ide-tab__dot--ok {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-bg);
+}
+.ide-tab__dot--found {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ide-tab__dot--none {
+  background: var(--border);
 }
 
 .ide-tab {
@@ -1115,6 +1156,16 @@ body {
   font-size: 11px;
   font-weight: 700;
   color: var(--accent);
+}
+
+/* 官方工具图标（六卡统一 24px，视觉对齐） */
+.ide-tab__logo-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
 }
 
 .ide-tab__st {

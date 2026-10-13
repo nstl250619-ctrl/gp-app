@@ -6,10 +6,7 @@ import type { ApplyResult, DetectResult, InstallPlan } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
 import ModelPicker from './ModelPicker';
-import IdeTabs, { type TabKey, WRITABLE } from './IdeTabs';
-
-// Single-model agents (Codex / Claude Code): only one default model is imported.
-const SINGLE_MODEL = new Set<TabKey>(['codex', 'claude']);
+import IdeTabs, { type TabKey, WRITABLE, SINGLE_MODEL } from './IdeTabs';
 
 export default function ConfigPage({ onNavigate }: PageProps) {
   const [tab, setTab] = useState<TabKey>('workbuddy');
