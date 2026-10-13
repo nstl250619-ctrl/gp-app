@@ -1,5 +1,8 @@
 // 文案扩展模块（§15.8：文案只活在 src/i18n/ 下）。index.ts 超行数后拆分到此处，spread 合并。
 export const zhExtra = {
+  sidebar: {
+    qqCopyHint: '点击复制 QQ 号',
+  },
   login: {
     brandTag: '· GreenPool',
     sub: '登录后，一键把绿池配置到你的每一个 AI 工具',

@@ -165,6 +165,14 @@ export default function App() {
         <nav className="sidebar__nav">{renderNav(MAIN_NAV)}</nav>
         <div className="sidebar__spacer" />
         <div className="sidebar__divider" />
+        <button
+          type="button"
+          className="sidebar__qq"
+          title={t('sidebar.qqCopyHint')}
+          onClick={() => navigator.clipboard.writeText('237525313').catch(() => {})}
+        >
+          QQ:237525313
+        </button>
         <nav className="sidebar__nav" style={{ paddingBottom: 'var(--space-3)' }}>{renderNav(BOTTOM_NAV)}</nav>
       </aside>
 
