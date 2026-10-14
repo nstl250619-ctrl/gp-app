@@ -6,6 +6,9 @@ export const zhExtra = {
   configExtra: {
     tabDsh: 'DeepSeek Harness',
   },
+  settingsExtra: {
+    updateFailed: '更新下载失败（网络波动），请稍后在设置页重试，或到官网重新下载安装包',
+  },
   login: {
     brandTag: '· GreenPool',
     sub: '登录后，一键把绿池配置到你的每一个 AI 工具',

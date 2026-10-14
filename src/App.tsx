@@ -106,7 +106,11 @@ export default function App() {
           const ok = window.confirm(
             `${t('nav.appTitle')} v${u.version}：${t('settings.available')}，${t('settings.updateNow')}？`,
           );
-          if (ok) downloadAndInstall().catch(() => {});
+          if (ok) {
+            downloadAndInstall().catch(() => {
+              window.alert(t('settingsExtra.updateFailed'));
+            });
+          }
         })
         .catch(() => {});
     }
