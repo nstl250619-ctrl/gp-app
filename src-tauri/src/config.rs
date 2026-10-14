@@ -65,6 +65,10 @@ pub const CLAUDE_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 /// Hermes：$HERMES_CONFIG_DIR/config.yaml → ~/.hermes/config.yaml。
 pub const HERMES_CONFIG_FILE: &str = "config.yaml";
 pub const HERMES_DIR_ENV: &str = "HERMES_CONFIG_DIR";
+/// DeepSeek Harness：$DSH_HOME/profiles/desktop/cordis.patch.yml → ~/.dsh/…。
+pub const DSH_PATCH_FILE: &str = "profiles/desktop/cordis.patch.yml";
+pub const DSH_CREDENTIALS_FILE: &str = ".credentials.yaml";
+pub const DSH_DIR_ENV: &str = "DSH_HOME";
 
 // ⚠️ Unix-only。Windows 上 0o600 无效，须用 ACL（icacls）收紧，见 fs_atomic::secure_permissions。
 #[cfg(unix)]
@@ -153,6 +157,22 @@ pub fn openclaw_candidate_paths() -> Vec<PathBuf> {
 /// Hermes：$HERMES_CONFIG_DIR/config.yaml → ~/.hermes/config.yaml。
 pub fn hermes_candidate_paths() -> Vec<PathBuf> {
     candidate_paths(HERMES_DIR_ENV, ".hermes", HERMES_CONFIG_FILE)
+}
+
+/// DeepSeek Harness：$DSH_HOME/profiles/desktop/cordis.patch.yml → ~/.dsh/…。
+/// 注意 DSH_HOME 指向 profile 根（patch 路径带子目录），与 candidate_paths 的 join(file) 模型不同。
+pub fn dsh_candidate_paths() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(dir) = std::env::var(DSH_DIR_ENV) {
+        let dir = dir.trim().to_string();
+        if !dir.is_empty() {
+            out.push(PathBuf::from(&dir).join(DSH_PATCH_FILE));
+        }
+    }
+    if let Some(home) = home_dir() {
+        out.push(home.join(".dsh").join(DSH_PATCH_FILE));
+    }
+    out
 }
 
 fn home_dir() -> Option<PathBuf> {

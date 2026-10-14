@@ -3,6 +3,9 @@ export const zhExtra = {
   sidebar: {
     qqCopyHint: '点击复制 QQ 号',
   },
+  configExtra: {
+    tabDsh: 'DeepSeek Harness',
+  },
   login: {
     brandTag: '· GreenPool',
     sub: '登录后，一键把绿池配置到你的每一个 AI 工具',

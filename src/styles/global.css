@@ -1091,14 +1091,14 @@ body {
 /* ============ IDE 平台选择卡（§八 设计稿同款） ============ */
 .ide-tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 16px;
 }
 
 @media (max-width: 900px) {
   .ide-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
