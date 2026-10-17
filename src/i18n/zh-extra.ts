@@ -5,6 +5,7 @@ export const zhExtra = {
   },
   configExtra: {
     tabDsh: 'DeepSeek Harness',
+    top100Note: '只显示 TOP100 条数据',
   },
   settingsExtra: {
     updateFailed: '更新下载失败（网络波动），请稍后在设置页重试，或到官网重新下载安装包',

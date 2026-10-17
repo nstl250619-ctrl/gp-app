@@ -1,6 +1,6 @@
-// 用量分区（统计/明细双 tab）：统计 = 积分按天柱状图；明细 = 分页表格（20 条/页，后端最多 100 条）。
+// 用量分区（统计/明细双 tab）：统计 = 积分按天柱状图；明细 = 单列表格（后端最多 TOP100）。
 // 时间筛选同时驱动统计卡与两个视图。
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { DayStat, UsageDetail as UsageDetailData } from '@/types/ipc';
 import { t } from '@/i18n';
@@ -37,8 +37,6 @@ function fmtTokens(p: number, c: number): string {
 function quotaUsd(quota: number): number {
   return quota / 500000;
 }
-
-const PAGE_SIZE = 20;
 
 type View = 'detail' | 'stats';
 
@@ -100,14 +98,8 @@ interface Props {
 
 export default function UsageDetailSection({ range, onRange, usage, usageMsg, onRefresh, refreshing }: Props) {
   const [view, setView] = useState<View>('detail');
-  const [page, setPage] = useState(1);
-  // 数据切换（时间范围/重新拉取）时回到第一页
-  useEffect(() => setPage(1), [usage, range]);
 
   const items = usage?.items ?? [];
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const cur = Math.min(page, totalPages);
-  const pageItems = items.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
 
   return (
     <>
@@ -178,7 +170,7 @@ export default function UsageDetailSection({ range, onRange, usage, usageMsg, on
           )}
           {items.length > 0 && (
             <>
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
                 <table className="log-table">
                   <thead>
                     <tr>
@@ -191,7 +183,7 @@ export default function UsageDetailSection({ range, onRange, usage, usageMsg, on
                     </tr>
                   </thead>
                   <tbody>
-                    {pageItems.map((item) => (
+                    {items.map((item) => (
                       <tr key={item.id}>
                         <td className="small muted">{formatUnix(item.createdAt)}</td>
                         <td>{item.modelName}</td>
@@ -204,30 +196,8 @@ export default function UsageDetailSection({ range, onRange, usage, usageMsg, on
                   </tbody>
                 </table>
               </div>
-              {usage?.truncated && (
-                <div className="banner" style={{ margin: 0, borderRadius: 0 }}>{t('config.detailTruncated')}</div>
-              )}
-              <div className="pagination">
-                <button
-                  type="button"
-                  className="pagination__btn"
-                  disabled={cur <= 1}
-                  onClick={() => setPage(cur - 1)}
-                  title={t('config.pagePrev')}
-                >
-                  {'‹'}
-                </button>
-                <span className="small muted">{cur} / {totalPages}</span>
-                <button
-                  type="button"
-                  className="pagination__btn"
-                  disabled={cur >= totalPages}
-                  onClick={() => setPage(cur + 1)}
-                  title={t('config.pageNext')}
-                >
-                  {'›'}
-                </button>
-              </div>
+              {/* pagination removed: backend caps details at TOP100 */}
+              <div className="banner" style={{ margin: 0, borderRadius: 0 }}>{t('configExtra.top100Note')}</div>
             </>
           )}
         </div>

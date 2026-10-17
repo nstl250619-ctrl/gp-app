@@ -11,7 +11,7 @@ export default function UsagePage() {
   const [quota, setQuota] = useState<QuotaSummary | null>(null);
   const [usage, setUsage] = useState<UsageDetail | null>(null);
   const [usageMsg, setUsageMsg] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<TimeRange>('7d');
+  const [timeRange, setTimeRange] = useState<TimeRange>('today');
 
   const loadUsage = useCallback((range: TimeRange) => {
     setUsageMsg(null);
