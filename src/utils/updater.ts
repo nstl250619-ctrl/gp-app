@@ -10,7 +10,8 @@ const AUTO_KEY = 'gp.autoUpdate';
 let cachedUpdate: Update | null = null;
 
 export function isAutoUpdateOn(): boolean {
-  return localStorage.getItem(AUTO_KEY) === 'on';
+  // default ON: fresh installs get auto update unless the user explicitly turned it off
+  return localStorage.getItem(AUTO_KEY) !== 'off';
 }
 
 export function setAutoUpdate(on: boolean): void {

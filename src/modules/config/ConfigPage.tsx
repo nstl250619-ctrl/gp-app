@@ -8,6 +8,35 @@ import { t } from '@/i18n';
 import ModelPicker from './ModelPicker';
 import IdeTabs, { type TabKey, WRITABLE, SINGLE_MODEL } from './IdeTabs';
 
+// ---- selection persistence (localStorage, per import target) ----
+const BASE_URL_KEY = 'gp.baseUrl';
+const BASE_URLS = ['https://api.greenpool.cn', 'https://aigw.greenpool.cn'];
+const modelsKey = (t: TabKey) => `gp.models.${t}`;
+
+function loadBaseUrl(): string {
+  const saved = localStorage.getItem(BASE_URL_KEY);
+  return saved && BASE_URLS.includes(saved) ? saved : BASE_URLS[0];
+}
+
+function saveBaseUrl(u: string): void {
+  try { localStorage.setItem(BASE_URL_KEY, u); } catch { /* ignore */ }
+}
+
+/** restore last saved selection for a target, intersected with the currently available list; fall back to defaults */
+function loadSavedModels(t: TabKey, list: string[]): string[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(modelsKey(t)) || '[]') as string[];
+    const set = new Set(list);
+    const kept = arr.filter((m) => set.has(m));
+    if (kept.length > 0) return kept;
+  } catch { /* ignore */ }
+  return SINGLE_MODEL.has(t) ? list.slice(0, 1) : list;
+}
+
+function saveModels(t: TabKey, ids: string[]): void {
+  try { localStorage.setItem(modelsKey(t), JSON.stringify(ids)); } catch { /* ignore */ }
+}
+
 export default function ConfigPage({ onNavigate }: PageProps) {
   const [tab, setTab] = useState<TabKey>('workbuddy');
   const [detect, setDetect] = useState<DetectResult | null>(null);
@@ -25,8 +54,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const selectedRef = useRef<string[]>([]);
   const modelsDirty = useRef(false);
-  const [baseUrl, setBaseUrl] = useState('https://api.greenpool.cn');
-  const baseUrlRef = useRef('https://api.greenpool.cn');
+  const [baseUrl, setBaseUrl] = useState(() => loadBaseUrl());
+  const baseUrlRef = useRef(loadBaseUrl());
 
   const isSingle = SINGLE_MODEL.has(tab);
 
@@ -82,8 +111,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       .then((list) => {
         setAvailable(list);
         if (!modelsDirty.current) {
-          // Single-model targets default to the first (primary) model only.
-          const init = SINGLE_MODEL.has(tab) ? list.slice(0, 1) : list;
+          // restore last saved selection for this target (per-target persistence)
+          const init = loadSavedModels(tab, list);
           selectedRef.current = init;
           setSelected(init);
           loadPlan(init);
@@ -98,7 +127,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
               .then((list) => {
                 setAvailable(list);
                 if (!modelsDirty.current) {
-                  const init = SINGLE_MODEL.has(tab) ? list.slice(0, 1) : list;
+                  const init = loadSavedModels(tab, list);
                   selectedRef.current = init;
                   setSelected(init);
                   loadPlan(init);
@@ -149,6 +178,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         : [...selectedRef.current, id];
     selectedRef.current = next;
     setSelected(next);
+    saveModels(tab, next);
     loadPlan(next);
   };
 
@@ -158,6 +188,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     const next = isSingle ? available.slice(0, 1) : available;
     selectedRef.current = next;
     setSelected(next);
+    saveModels(tab, next);
     loadPlan(next);
   };
 
@@ -165,6 +196,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     modelsDirty.current = true;
     selectedRef.current = [];
     setSelected([]);
+    saveModels(tab, []);
     setPlan(null);
     setPlanState('ready');
   };
@@ -174,9 +206,9 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     pathDirty.current = false;
     modelsDirty.current = false;
-    // Switching to a single-model target resets selection to the primary model.
-    if (SINGLE_MODEL.has(key)) {
-      const init = available.slice(0, 1);
+    // restore this target's last saved selection immediately (load() will re-apply it once models arrive)
+    if (available.length > 0) {
+      const init = loadSavedModels(key, available);
       selectedRef.current = init;
       setSelected(init);
       loadPlan(init);
@@ -187,6 +219,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const changeUrl = (u: string) => {
     baseUrlRef.current = u;
     setBaseUrl(u);
+    saveBaseUrl(u);
     loadPlan(selectedRef.current);
   };
 
