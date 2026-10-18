@@ -1,8 +1,6 @@
 //! new-api HTTP 客户端（精简版）：仅保留中转站状态探测（status）与密钥连通自测（verify_key）。
 //! 账号/密钥/用量/兑换/找回密码已全部切网关（Shop 网关代理 new-api），此处不再直连。
 
-use std::time::Duration;
-
 use serde_json::{json, Value};
 
 use crate::config::DEFAULT_BASE_URL;
@@ -24,14 +22,7 @@ impl NewApiClient {
         // 全局单例：跨调用复用连接池。
         static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
         SHARED
-            .get_or_init(|| {
-                reqwest::Client::builder()
-                    .connect_timeout(Duration::from_secs(10)) // 建连快速失败
-                    .timeout(Duration::from_secs(30))
-                    .no_proxy() // 直连：系统代理可能把 *.greenpool.cn 错误路由
-                    .build()
-                    .expect("failed to build http client")
-            })
+            .get_or_init(|| crate::services::http_client(10, 30)) // 直连探测：建连 10s、总超时 30s
             .clone()
     }
 

@@ -1,5 +1,13 @@
 //! 一键配置编排：探测 → 计划 → 备份写入校验 → 回滚 → 历史。
 //! 记录暂用 app_data_dir 下的 JSON 文件（骨架期零新依赖；§12.1 的 SQLite 留待引入 rusqlite 时切换）。
+//!
+//! ## 还原原则（产品裁决 2026-10-18）
+//! **还原 = 写回「执行本次配置之前」的备份文件内容**（即 GP 介入前的原始配置），
+//! 而不是回退到「上一次 GP 写入后的状态」。落实方式：
+//! 1. `apply` 仅在「当前配置未被 GP 托管」时创建备份（托管态不再新建 → 杜绝链式污染）；
+//! 2. 托管态再次导入时，继承最近一次「GP 介入前」的还原点；
+//! 3. `rollback` 写回前校验备份内容：若检测到 GP 托管标记（历史版本产生的污染快照）则
+//!    拒绝还原并明确报错，绝不静默把 GP 配置再写一遍。
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -238,6 +246,15 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
         })
         .ok_or_else(|| AppError::RollbackFailed("找不到目标配置路径".into()))?;
 
+    // 还原原则：只允许写回「执行配置前」的原始备份。
+    // 历史污染快照（内容已是 GP 托管态）直接拒绝，避免「还原了却还是 GP」的误导。
+    let backup_content = fs_atomic::read_string(&backup_path)?;
+    if backup_looks_managed(&rec.target, &backup_content) {
+        return Err(AppError::RollbackFailed(
+            "该还原点是旧版本产生的 GP 配置快照（非配置前原始备份），已阻止回退；请手工恢复原始配置或重新导入后再还原".into(),
+        ));
+    }
+
     adapter.rollback(&backup_path, &target_path)?;
 
     let mut records = records;
@@ -252,6 +269,25 @@ pub fn history(data_dir: &PathBuf) -> AppResult<Vec<InstallRecord>> {
     let mut records = load_records(data_dir)?;
     records.reverse();
     Ok(records)
+}
+
+/// 备份内容是否已是「GP 托管态」——用于拦截历史版本产生的污染还原点。
+/// 背景：2026-10-18 之前的版本在托管态重复导入时会备份「上一次 GP 写入后」的文件，
+/// 这类快照写回后仍保留 GP 配置，违背「还原 = 回到配置前」原则。
+fn backup_looks_managed(target: &str, content: &str) -> bool {
+    match target {
+        // WorkBuddy / CodeBuddy：托管条目 name 固定为 "GP"（MANAGED_MODEL_NAME）
+        "workbuddy" | "codebuddy" => {
+            content.contains("\"name\": \"GP\"") || content.contains("\"name\":\"GP\"")
+        }
+        // Codex：GP provider id 固定 "gp"
+        "codex" => content.contains("model_provider") && content.contains("= \"gp\""),
+        // Claude Code：ANTHROPIC_BASE_URL 指向 greenpool
+        "claude" => content.contains("ANTHROPIC_BASE_URL") && content.contains("greenpool"),
+        // OpenClaw / DSH / Hermes：provider 段含 greenpool
+        "openclaw" | "dsh" | "hermes" => content.contains("greenpool") && content.contains("provider"),
+        _ => false,
+    }
 }
 
 /// 备份镜像目录：<data_dir>/backups/。

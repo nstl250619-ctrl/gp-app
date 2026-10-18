@@ -94,11 +94,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshProbe();
+    // 版本号 + 自动更新检测（instance.probe 已由上方探测循环负责，不在此重复触发）
     import('@tauri-apps/api/app').then(({ getVersion }) =>
       getVersion().then(setVersion).catch(() => {}),
     );
-    // 自动更新（仅开关开启时检测；发现新版本仍需用户确认后才下载安装）
     if (isAutoUpdateOn()) {
       checkForUpdate()
         .then((u) => {
@@ -114,7 +113,7 @@ export default function App() {
         })
         .catch(() => {});
     }
-  }, [refreshProbe]);
+  }, []);
 
   useEffect(() => {
     setVisited((v) => (v.has(page) ? v : new Set(v).add(page)));

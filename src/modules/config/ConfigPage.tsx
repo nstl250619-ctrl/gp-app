@@ -111,8 +111,10 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       .then((list) => {
         setAvailable(list);
         if (!modelsDirty.current) {
-          // restore last saved selection for this target (per-target persistence)
+          // restore last saved selection for this target (per-target persistence),
+          // then persist it immediately so the first-seen state is remembered too.
           const init = loadSavedModels(tab, list);
+          saveModels(tab, init);
           selectedRef.current = init;
           setSelected(init);
           loadPlan(init);
@@ -128,6 +130,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
                 setAvailable(list);
                 if (!modelsDirty.current) {
                   const init = loadSavedModels(tab, list);
+                  saveModels(tab, init);
                   selectedRef.current = init;
                   setSelected(init);
                   loadPlan(init);
@@ -209,6 +212,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     // restore this target's last saved selection immediately (load() will re-apply it once models arrive)
     if (available.length > 0) {
       const init = loadSavedModels(key, available);
+      saveModels(key, init);
       selectedRef.current = init;
       setSelected(init);
       loadPlan(init);

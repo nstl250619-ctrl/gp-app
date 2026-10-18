@@ -83,7 +83,8 @@ pub const RELATED_REASONING_KEYWORDS: &[&str] = &[
     "235b", "671b",
 ];
 
-// 临时默认模型清单（§8.6 实测 13 个）。todo(#6)：改为从 new-api GET /api/user/models 拉取。
+// 模型清单离线兜底（§8.6 实测 13 个）：仅在网关不可达 / 拉取模型失败时启用，
+// 正常路径始终走 install.available_models → 网关 GET /api/user/models（按用户分组过滤）。
 pub const DEFAULT_MODEL_IDS: &[&str] = &[
     "fast-model",
     "balanced-model",

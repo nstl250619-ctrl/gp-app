@@ -6,8 +6,6 @@
 //! 充值 7.7 的 amount 为 ¥ 实付，折算率以 7.5 的 rate 下发（勿硬编码）；
 //! id 均为纯数字字符串；除 7.1~7.4 外 Bearer session_token。
 
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -75,16 +73,7 @@ fn http() -> reqwest::Client {
     // 时产生 8+ 个独立连接池，突发建连失败直接表现为「网络连不上中转站」。
     static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     SHARED
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                // 连接 8s 快速失败（未就绪时不让界面干等）；总超时放宽给慢响应余量
-                .connect_timeout(Duration::from_secs(8))
-                .timeout(Duration::from_secs(15))
-                .pool_max_idle_per_host(8)
-                .no_proxy() // 直连：系统代理可能错误路由 *.greenpool.cn（SSO 铸号被劫走），实测直连正常
-                .build()
-                .expect("shop http client")
-        })
+        .get_or_init(|| super::http_client(8, 15)) // 连接 8s 快速失败；总超时 15s 给慢响应余量
         .clone()
 }
 
