@@ -23,7 +23,7 @@ use crate::config;
 use crate::error::{AppError, AppResult};
 use crate::fs_atomic;
 
-use super::types::{ApplyResult, DetectResult, DiffRow, InstallPlan, ModelSeed, WriteInput};
+use super::types::{ApplyResult, DetectResult, DiffRow, ExtraBackup, InstallPlan, ModelSeed, WriteInput};
 
 const PROVIDER_ID: &str = "greenpool";
 const DISPLAY_NAME: &str = "GP:";
@@ -43,7 +43,11 @@ impl DshAdapter {
     fn existing_path(&self, custom: Option<&Path>) -> Option<PathBuf> {
         match custom {
             Some(p) => Some(p.to_path_buf()),
-            None => (self.candidates)().into_iter().find(|p| p.exists()),
+            // 新装 DSH 可能还没有 patch 文件 → 回退到第一个候选路径（apply 会创建，内容为空的条目数组）
+            None => (self.candidates)()
+                .into_iter()
+                .find(|p| p.exists())
+                .or_else(|| (self.candidates)().into_iter().next()),
         }
     }
 
@@ -55,6 +59,62 @@ impl DshAdapter {
             .and_then(|p| p.parent()) // profile root
             .map(|p| p.join(config::DSH_CREDENTIALS_FILE))
             .unwrap_or_else(|| PathBuf::from(config::DSH_CREDENTIALS_FILE))
+    }
+
+    /// 读取 patch 条目；文件不存在/为空时返回空数组（新装 DSH 无 patch，apply 会创建）。
+    fn read_patch(path: &Path) -> AppResult<Vec<Value>> {
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs_atomic::read_string(path)?;
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        Self::parse_patch(&raw)
+    }
+
+    /// 行级合并 `.credentials.yaml` 的 `refs.<key>`：
+    /// 只替换/追加目标行，其余内容（records 加密凭据、注释、缩进）逐字节保留。
+    /// 背景：全量 YAML 反序列化+重写会改变 records 的原始格式（键序/引号/类型标签），
+    /// 可能让 DSH 读不出其他凭据 → 用户被莫名登出。这里只碰一行。
+    fn merge_cred_ref(raw: &str, key: &str, value: &str) -> String {
+        let scalar = serde_yaml::to_string(&value)
+            .map(|s| s.trim_end().to_string())
+            .unwrap_or_else(|_| format!("{:?}", value));
+        let mut lines: Vec<String> = raw.lines().map(|l| l.to_string()).collect();
+
+        let refs_start = lines
+            .iter()
+            .position(|l| l.trim_end() == "refs:" && !l.starts_with(' ') && !l.starts_with('\t'));
+
+        match refs_start {
+            Some(start) => {
+                // refs 段结束 = 下一个顶层非空行
+                let end = ((start + 1)..lines.len())
+                    .find(|&i| {
+                        let t = &lines[i];
+                        !t.trim().is_empty() && !t.starts_with(' ') && !t.starts_with('\t')
+                    })
+                    .unwrap_or(lines.len());
+                let prefix = format!("{}:", key);
+                let hit = ((start + 1)..end).find(|&i| lines[i].trim_start().starts_with(&prefix));
+                match hit {
+                    Some(i) => lines[i] = format!("  {}: {}", key, scalar),
+                    None => lines.insert(end, format!("  {}: {}", key, scalar)),
+                }
+            }
+            None => {
+                while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+                    lines.pop();
+                }
+                lines.push("refs:".into());
+                lines.push(format!("  {}: {}", key, scalar));
+            }
+        }
+
+        let mut out = lines.join("\n");
+        out.push('\n');
+        out
     }
 
     fn parse_patch(raw: &str) -> AppResult<Vec<Value>> {
@@ -158,8 +218,7 @@ impl super::ConfigAdapter for DshAdapter {
         custom_path: Option<&Path>,
     ) -> AppResult<InstallPlan> {
         let path = self.existing_path(custom_path).ok_or(AppError::TargetNotFound)?;
-        let raw = fs_atomic::read_string(&path)?;
-        let items = Self::parse_patch(&raw)?;
+        let items = Self::read_patch(&path)?;
         let has_managed = Self::is_managed(&items);
 
         let model_id = seeds
@@ -240,8 +299,7 @@ impl super::ConfigAdapter for DshAdapter {
             }
         }
 
-        let raw = fs_atomic::read_string(&path)?;
-        let mut items = Self::parse_patch(&raw)?;
+        let mut items = Self::read_patch(&path)?;
         let has_managed = Self::is_managed(&items);
 
         // 已是 GP 托管态时不新建备份：还原点必须是「GP 介入前」的原始配置（链式备份防护）。
@@ -286,35 +344,48 @@ impl super::ConfigAdapter for DshAdapter {
             .map_err(|e| AppError::Other(format!("cordis.patch.yml 序列化失败：{}", e)))?;
         fs_atomic::atomic_write(&path, &content)?;
 
-        // 3) credentials：refs.GREENPOOL_API_KEY（records 原样保留）
+        // 3) credentials：refs.GREENPOOL_API_KEY —— 只做行级合并，绝不全量重写
+        //    （records 里是 DSH 自己的加密凭据，YAML 往返可能改变键序/引号/类型标签 → 其他凭据失效）
         let cred_path = Self::credentials_path(&path);
         let cred_raw = if cred_path.exists() { fs_atomic::read_string(&cred_path)? } else { String::new() };
-        let mut cred: Value = if cred_raw.is_empty() {
-            json!({ "version": 1, "records": {}, "refs": {} })
+        // 解析校验：失败即中止（不破坏原文件）
+        let cred_parsed: Option<Value> = if cred_raw.trim().is_empty() {
+            None
         } else {
-            serde_yaml::from_str(&cred_raw)
-                .map_err(|e| AppError::Other(format!(".credentials.yaml 无法解析：{}", e)))?
+            Some(
+                serde_yaml::from_str(&cred_raw)
+                    .map_err(|e| AppError::Other(format!(".credentials.yaml 无法解析：{}", e)))?,
+            )
         };
-        {
-            let obj = cred
-                .as_object_mut()
-                .ok_or_else(|| AppError::Other(".credentials.yaml 顶层必须是映射".into()))?;
-            let refs = obj.entry("refs").or_insert_with(|| json!({}));
-            refs.as_object_mut()
-                .ok_or_else(|| AppError::Other(".credentials.yaml 的 refs 必须是映射".into()))?
-                .insert(CRED_KEY.into(), Value::String(input.api_key.clone()));
-        }
-        let cred_content = serde_yaml::to_string(&cred)
-            .map_err(|e| AppError::Other(format!(".credentials.yaml 序列化失败：{}", e)))?;
+        // 是否已是 GP 托管态（refs 里已有我们的 key）：重复导入不新建备份（还原点=配置前）
+        let cred_already_managed = cred_parsed
+            .as_ref()
+            .and_then(|v| v.get("refs").and_then(|r| r.get(CRED_KEY)))
+            .is_some();
+
+        let cred_content = Self::merge_cred_ref(&cred_raw, CRED_KEY, &input.api_key);
+        let mut extra_backups: Vec<ExtraBackup> = Vec::new();
         if cred_content != cred_raw {
-            let cred_backup = if cred_path.exists() && !cred_raw.is_empty() && backup.is_some() {
-                Some(fs_atomic::backup(&cred_path)?)
-            } else {
-                None
-            };
+            if cred_path.exists() && !cred_raw.trim().is_empty() && !cred_already_managed {
+                let bp = fs_atomic::backup(&cred_path)?;
+                extra_backups.push(ExtraBackup {
+                    backup: bp.display().to_string(),
+                    target: cred_path.display().to_string(),
+                });
+            }
             fs_atomic::atomic_write(&cred_path, &cred_content)?;
-            let _ = cred_backup; // 主备份（patch 文件）已在记录中
         }
+        // credentials 回读校验：目标 ref 在位、且文件仍可被 YAML 解析
+        let cred_ok = fs_atomic::read_string(&cred_path)
+            .ok()
+            .and_then(|raw| serde_yaml::from_str::<Value>(&raw).ok())
+            .and_then(|v| {
+                v.get("refs")
+                    .and_then(|r| r.get(CRED_KEY))
+                    .and_then(|k| k.as_str())
+                    .map(|k| k == input.api_key.as_str())
+            })
+            .unwrap_or(false);
 
         // 回读校验
         let back = fs_atomic::read_string(&path)?;
@@ -329,10 +400,10 @@ impl super::ConfigAdapter for DshAdapter {
                         .map(|p| p == PROVIDER_ID)
                         .unwrap_or(false)
                 })
-            && cred_path
-                .exists();
+            && cred_ok;
 
         Ok(ApplyResult {
+            extra_backups,
             status: if verify_ok { "applied".into() } else { "failed".into() },
             path: path.display().to_string(),
             backup_path: backup.map(|b| b.display().to_string()),
@@ -343,6 +414,12 @@ impl super::ConfigAdapter for DshAdapter {
     }
 
     /// 按记录的目标路径还原（不重新探测），备份内容原子写回 + 摘要校验。
+    fn is_managed_content(&self, raw: &str) -> bool {
+        Self::parse_patch(raw)
+            .map(|items| Self::is_managed(&items))
+            .unwrap_or(false)
+    }
+
     fn rollback(&self, backup: &Path, target: &Path) -> AppResult<()> {
         if !backup.exists() {
             return Err(AppError::RollbackFailed("备份文件不存在".into()));
@@ -374,6 +451,34 @@ mod tests {
 
     fn seed(id: &str) -> ModelSeed {
         ModelSeed { id: id.into(), supports_tool_call: true, supports_images: true, supports_reasoning: true }
+    }
+
+    #[test]
+    fn merge_cred_ref_preserves_records_and_is_idempotent() {
+        // records 是 DSH 自己的加密凭据：行级合并必须逐字节保留，只动 refs 里的目标行
+        let raw = "version: 1\nrecords:\n  a/b:\n    kind: grant\n    token: abc\nrefs:\n  OLD_KEY: v1\n";
+        let out = DshAdapter::merge_cred_ref(raw, "GREENPOOL_API_KEY", "sk-gp");
+        let v: Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(v["refs"]["GREENPOOL_API_KEY"], "sk-gp");
+        assert_eq!(v["refs"]["OLD_KEY"], "v1");
+        assert_eq!(v["records"]["a/b"]["token"], "abc");
+        assert!(out.contains("    token: abc"), "records 段必须原样保留：{}", out);
+
+        // 二次合并：替换而非追加（幂等）
+        let out2 = DshAdapter::merge_cred_ref(&out, "GREENPOOL_API_KEY", "sk-gp2");
+        let v2: Value = serde_yaml::from_str(&out2).unwrap();
+        assert_eq!(v2["refs"]["GREENPOOL_API_KEY"], "sk-gp2");
+        assert_eq!(v2["refs"]["OLD_KEY"], "v1");
+        assert_eq!(out2.matches("GREENPOOL_API_KEY").count(), 1);
+    }
+
+    #[test]
+    fn merge_cred_ref_creates_refs_when_missing() {
+        let raw = "version: 1\nrecords:\n  x/y:\n    kind: grant\n";
+        let out = DshAdapter::merge_cred_ref(raw, "GREENPOOL_API_KEY", "sk-gp");
+        let v: Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(v["refs"]["GREENPOOL_API_KEY"], "sk-gp");
+        assert_eq!(v["records"]["x/y"]["kind"], "grant");
     }
 
     #[test]

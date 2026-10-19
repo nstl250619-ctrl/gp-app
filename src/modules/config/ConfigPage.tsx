@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Wand2, X } from 'lucide-react';
 import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
-import type { ApplyResult, DetectResult, InstallPlan } from '@/types/ipc';
+import type { ApplyResult, AvailableModels, DetectResult, InstallPlan } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
 import ModelPicker from './ModelPicker';
@@ -51,6 +51,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pathDraftRef = useRef('');
   const pathDirty = useRef(false);
   const [available, setAvailable] = useState<string[]>([]);
+  const [modelsOffline, setModelsOffline] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const selectedRef = useRef<string[]>([]);
   const modelsDirty = useRef(false);
@@ -107,8 +108,10 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         }
       })
       .catch((e) => setMsg(errorMessage(e)));
-    invokeCommand<string[]>('install.availableModels', {})
-      .then((list) => {
+    invokeCommand<AvailableModels>('install.availableModels', {})
+      .then((res) => {
+        const list = res.models;
+        setModelsOffline(res.offline);
         setAvailable(list);
         if (!modelsDirty.current) {
           // restore last saved selection for this target (per-target persistence),
@@ -125,8 +128,10 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         if (isIpcError(e) && e.code === 'KEY_MISSING') {
           try {
             await invokeCommand('account.setupKey', {});
-            invokeCommand<string[]>('install.availableModels', {})
-              .then((list) => {
+            invokeCommand<AvailableModels>('install.availableModels', {})
+              .then((res) => {
+                const list = res.models;
+                setModelsOffline(res.offline);
                 setAvailable(list);
                 if (!modelsDirty.current) {
                   const init = loadSavedModels(tab, list);
@@ -216,6 +221,9 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       selectedRef.current = init;
       setSelected(init);
       loadPlan(init);
+    } else {
+      // 列表未就绪：清空选择，避免沿用上个 target 的模型
+      selectedRef.current = []; setSelected([]); setPlan(null); setPlanState('ready');
     }
     setMsg(!WRITABLE.has(key) ? t('config.tabUnavailable') : null);
   };
@@ -269,6 +277,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           {baseUrl.includes('aigw') && (
             <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.aigwVpnTip')}</div>
           )}
+
+          {modelsOffline && <div className="hint" style={{ marginBottom: 'var(--space-2)' }}>{t('configExtra.modelsOffline')}</div>}
 
           <ModelPicker
             available={available}

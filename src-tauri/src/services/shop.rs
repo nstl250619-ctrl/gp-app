@@ -83,9 +83,22 @@ fn url(path: &str) -> String {
 
 /// /api/* 统一信封（与 new-api 同构）：认 success，不认 HTTP 状态码。
 async fn parse_envelope<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> AppResult<T> {
+    let status = resp.status().as_u16();
     let text = resp.text().await.map_err(|e| AppError::Other(e.to_string()))?;
     let v: serde_json::Value = serde_json::from_str(&text)
         .map_err(|_| AppError::Other("商城响应无法解析".into()))?;
+    // 401 + 业务 code → 绑定引导（契约见《联合整改需求单 v2》4.1）：
+    // 用户只知道「请先登录」却不知道要绑定中转站账号，必须转成可识别的错误码。
+    if status == 401 {
+        match v.get("code").and_then(|c| c.as_str()).unwrap_or("") {
+            "need_bind_newapi" => return Err(AppError::NeedBindNewapi),
+            "need_rebind_newapi" => return Err(AppError::NeedRebindNewapi),
+            "newapi_user_banned" => return Err(AppError::NewapiBanned),
+            // 注册时邮箱已存在（商城 401 + code）：转 EMAIL_TAKEN，前端自动切登录 tab 并预填账号
+            "already_registered" => return Err(AppError::EmailTaken),
+            _ => {}
+        }
+    }
     let data = v.get("data").cloned().unwrap_or(serde_json::Value::Null);
     if v.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
         serde_json::from_value(data).map_err(|_| AppError::Other("商城响应数据格式不符".into()))
@@ -564,6 +577,39 @@ async fn gateway_get_once<T: serde::de::DeserializeOwned>(path: &str) -> AppResu
         .await
         .map_err(AppError::Network)?;
     parse_envelope(resp).await
+}
+
+/// 绑定中转站账号（《联合整改需求单 v2》4.2）：POST /api/tool/newapi/bind。
+/// 仅在中转站**已有**该账号（SSO 返回 need_bind_newapi）时使用：
+/// 网关校验通过后加密保存密码并立即写入 tool_sessions.new_api_token，之后自动登录。
+/// 响应体兼容「裸 JSON」（{ok,bound}）与「success/data 信封」两种形态。
+pub async fn bind_newapi(username: String, password: String) -> AppResult<()> {
+    let resp = http()
+        .post(url("/api/tool/newapi/bind"))
+        .bearer_auth(&gateway_token()?)
+        .json(&json!({ "newapi_username": username, "newapi_password": password }))
+        .send()
+        .await
+        .map_err(AppError::Network)?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| AppError::Other(e.to_string()))?;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if (200..300).contains(&status) {
+        // 2xx 还不够：商城可能用 200 包裹 { ok:false } / { success:false } 的业务失败，
+        // 直接放行会导致「弹框关闭 → 仍 401 → 反复弹框」。
+        let explicit_fail = v.get("ok").and_then(|b| b.as_bool()) == Some(false)
+            || v.get("success").and_then(|b| b.as_bool()) == Some(false);
+        if !explicit_fail {
+            return Ok(());
+        }
+    }
+    // 401 credentials_invalid / 400 等：回传服务端具体原因（密码错 / 账号不存在 / 被禁用）
+    let msg = v
+        .get("message")
+        .or_else(|| v.pointer("/error/message"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("绑定失败，请检查中转站账号与密码");
+    Err(AppError::Other(msg.to_string()))
 }
 
 async fn gateway_post<T: serde::de::DeserializeOwned>(path: &str, body: serde_json::Value) -> AppResult<T> {

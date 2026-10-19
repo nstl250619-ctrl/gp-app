@@ -1,29 +1,52 @@
 // 用量页：4 张等高统计卡（统一三段结构：标签 → 大数字 → 一行紧凑小字）+ 统计/明细分区。
 import { useCallback, useEffect, useState } from 'react';
-import { errorMessage, invokeCommand } from '@/services/ipc';
+import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
 import type { QuotaSummary, UsageDetail } from '@/types/ipc';
 import { t } from '@/i18n';
 import { fmtCredits, fmtUsdFloor2 } from '@/utils/fmt';
 import { formatDateTime } from '@/utils/time';
 import UsageDetailSection, { rangeLabel, rangeTimestamps, type TimeRange } from './UsageDetail';
+import BindNewapiDialog from './BindNewapiDialog';
+
+/** Shop requires binding a new-api account (contract 4.1): open bind dialog instead of a bare error. */
+function isBindRequired(e: unknown): boolean {
+  return isIpcError(e) && (e.code === 'NEED_BIND_NEWAPI' || e.code === 'NEED_REBIND_NEWAPI');
+}
 
 export default function UsagePage() {
   const [quota, setQuota] = useState<QuotaSummary | null>(null);
   const [usage, setUsage] = useState<UsageDetail | null>(null);
   const [usageMsg, setUsageMsg] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
+  const [bindOpen, setBindOpen] = useState(false);
 
   const loadUsage = useCallback((range: TimeRange) => {
     setUsageMsg(null);
     const { start, end } = rangeTimestamps(range);
     return invokeCommand<UsageDetail>('usage.detail', { startTs: start, endTs: end })
       .then(setUsage)
-      .catch((e) => { setUsage(null); setUsageMsg(errorMessage(e)); });
+      .catch((e) => {
+        if (isBindRequired(e)) setBindOpen(true);
+        setUsage(null);
+        setUsageMsg(errorMessage(e));
+      });
   }, []);
 
   const refreshQuota = useCallback(() => {
-    invokeCommand<QuotaSummary>('usage.getQuota', {}).then(setQuota).catch(() => setQuota(null));
+    invokeCommand<QuotaSummary>('usage.getQuota', {})
+      .then(setQuota)
+      .catch((e) => {
+        if (isBindRequired(e)) setBindOpen(true);
+        setQuota(null);
+      });
   }, []);
+
+  // 绑定成功：关闭弹框并重新拉取余额与明细（等价于原请求重试）
+  const onBound = useCallback(() => {
+    setBindOpen(false);
+    refreshQuota();
+    void loadUsage(timeRange);
+  }, [refreshQuota, loadUsage, timeRange]);
 
   useEffect(() => {
     refreshQuota();
@@ -114,6 +137,8 @@ export default function UsagePage() {
       </div>
 
       <UsageDetailSection range={timeRange} onRange={setTimeRange} usage={usage} usageMsg={usageMsg} onRefresh={manualRefresh} refreshing={refreshing} />
+
+      <BindNewapiDialog open={bindOpen} onClose={() => setBindOpen(false)} onBound={onBound} />
     </div>
   );
 }

@@ -90,6 +90,12 @@ export interface QuotaSummary {
   subscriptionEndTime?: number | null;
 }
 
+/** install.availableModels：offline=true 表示网关不可达、当前为离线兜底清单 */
+export interface AvailableModels {
+  models: string[];
+  offline: boolean;
+}
+
 export interface LogItem {
   id: number;
   createdAt: number;

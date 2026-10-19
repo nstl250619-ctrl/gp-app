@@ -1,6 +1,6 @@
 //! 配置适配器共享类型（§7.2 install.* 契约）。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +59,17 @@ pub struct InstallPlan {
     pub key_after: String,
 }
 
+/// 附加文件备份（一个 target 写多个文件时，例如 DSH 的 patch + .credentials.yaml）：
+/// 主备份只覆盖主配置，附加备份随同一条记录一起还原，保证「还原 = 完全回到配置前」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraBackup {
+    /// 备份文件路径
+    pub backup: String,
+    /// 还原时写回的目标文件路径
+    pub target: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyResult {
@@ -69,4 +80,7 @@ pub struct ApplyResult {
     pub verify_ok: bool,
     pub requires_restart: bool,
     pub message: String,
+    /// 附加文件备份（默认空）
+    #[serde(default)]
+    pub extra_backups: Vec<ExtraBackup>,
 }

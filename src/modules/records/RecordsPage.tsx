@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { errorMessage, invokeCommand } from '@/services/ipc';
+import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
 import type { InstallRecord } from '@/types/ipc';
 import { t } from '@/i18n';
 import { formatRelative } from '@/utils/time';
@@ -24,12 +24,19 @@ export default function RecordsPage() {
     load();
   }, [load]);
 
-  const rollback = async (id: string) => {
+  const rollback = async (id: string, force = false) => {
     setMsg(null);
     try {
-      await invokeCommand('install.rollback', { recordId: id });
+      await invokeCommand('install.rollback', { recordId: id, force });
       load();
     } catch (e) {
+      // 还原点是 GP 快照时后端会阻止：这里给用户一次明确确认的机会（force 重试）
+      if (!force && isIpcError(e) && e.code === 'ROLLBACK_BLOCKED') {
+        if (window.confirm(t('recordsExtra.forceConfirm'))) {
+          await rollback(id, true);
+          return;
+        }
+      }
       setMsg(errorMessage(e));
     }
   };

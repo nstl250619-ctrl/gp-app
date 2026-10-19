@@ -9,8 +9,14 @@ pub const APP_NAME_EN: &str = "GreenPool";
 pub const APP_ABBR: &str = "GP";
 
 pub const DEFAULT_BASE_URL: &str = "https://api.greenpool.cn";
+/// GP 自身状态探测地址（顶部/底部「中转站已连接」绿点）。
+/// 用 aigw：灰云直连（不经 Cloudflare），国内探测更快更稳；
+/// 注意与 DEFAULT_BASE_URL 分离——后者仍是一键配置写入客户端的默认服务地址。
+pub const PROBE_BASE_URL: &str = "https://aigw.greenpool.cn";
 /// Shop 商城（账号/钱包/充值唯一真源；2026-10-07 已上线接入）。
-pub const SHOP_BASE_URL: &str = "https://shop.greenpool.cn";
+/// Shop 网关（账号/钱包/充值/订单/商城/核销/SSO 全部经此）。
+/// 用 shop-direct：灰云直连（不经 Cloudflare），实测同一服务、延迟 0.29s vs 2.80s。
+pub const SHOP_BASE_URL: &str = "https://shop-direct.greenpool.cn";
 /// Shop 固定邀请码（产品配置；注册时自动带入，用户无感）。
 pub const SHOP_INVITE_CODE: &str = "DYQFMH";
 /// 设备会话 token（7.1 建立，匿名，长期复用）。

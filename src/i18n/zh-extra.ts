@@ -6,9 +6,23 @@ export const zhExtra = {
   configExtra: {
     tabDsh: 'DeepSeek Harness',
     top100Note: '只显示 TOP100 条数据',
+    modelsOffline: '网关未连通，当前显示离线兜底模型清单（可能不是最新可用列表）',
+  },
+  recordsExtra: {
+    forceConfirm: '该还原点是 GP 配置快照（非「配置前原始备份」）。继续还原会回到该快照的内容，确定继续吗？',
   },
   settingsExtra: {
     updateFailed: '更新下载失败（网络波动），请稍后在设置页重试，或到官网重新下载安装包',
+  },
+  bind: {
+    title: '绑定中转站账号',
+    sub: '你的商城账号尚未绑定中转站账号。重新再次输入邮箱和密码即可绑定（密码加密保存，仅用于自动登录）',
+    username: '邮箱账号',
+    password: '密码',
+    submit: '绑定并继续',
+    submitting: '绑定中…',
+    later: '稍后再说',
+    invalid: '请填写邮箱账号和密码',
   },
   login: {
     brandTag: '· GreenPool',

@@ -36,6 +36,16 @@ pub async fn account_setup_key() -> CommandResult<SetupKeyResult> {
     respond(services::account::setup_key().await)
 }
 
+/// 绑定中转站账号（SSO 失败引导，契约 4.2）：仅中转站已有该账号时使用。
+#[tauri::command]
+pub async fn account_bind_newapi(username: String, password: String) -> CommandResult<SimpleAck> {
+    respond(
+        services::shop::bind_newapi(username, password)
+            .await
+            .map(|_| SimpleAck),
+    )
+}
+
 /// 账号在 new-api 的 key 列表（选择用，不回明文）。
 #[tauri::command]
 pub async fn account_list_keys() -> CommandResult<Vec<KeyItem>> {

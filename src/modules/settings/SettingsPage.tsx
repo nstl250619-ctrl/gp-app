@@ -75,6 +75,10 @@ export default function SettingsPage() {
 
   const logout = async () => {
     await invokeCommand('account.logout', {}).catch(() => {});
+    // 换号后不沿用上个账号的模型选择（各账号可用分组不同，避免导入无权限模型）
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('gp.models.'))
+      .forEach((k) => localStorage.removeItem(k));
     // 整页重载：重新走 app.status 探测 → 回到登录门面
     window.location.reload();
   };

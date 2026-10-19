@@ -148,7 +148,7 @@ export const zh = {
     willChange: 'OpenAI 兼容模式配置',
     rowService: '服务地址',
     serviceUrlHint: '导入配置使用的 API 地址',
-    aigwVpnTip: '开VPN，速度更稳定',
+    aigwVpnTip: 'aigw 走灰云直连（不经 Cloudflare），国内访问更快更稳',
     rowKey: '密钥',
     keyPlain: '（明文）',
     rowModel: '模型名称',

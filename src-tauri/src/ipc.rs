@@ -50,9 +50,13 @@ impl From<crate::error::AppError> for CommandError {
             crate::error::AppError::KeyMissing => ("KEY_MISSING", "user", e.to_string()),
             crate::error::AppError::EmailTaken => ("EMAIL_TAKEN", "user", e.to_string()),
             crate::error::AppError::SessionExpired => ("AUTH_EXPIRED", "user", e.to_string()),
+            crate::error::AppError::NeedBindNewapi => ("NEED_BIND_NEWAPI", "user", e.to_string()),
+            crate::error::AppError::NeedRebindNewapi => ("NEED_REBIND_NEWAPI", "user", e.to_string()),
+            crate::error::AppError::NewapiBanned => ("NEWAPI_USER_BANNED", "user", e.to_string()),
             crate::error::AppError::TargetNotFound => ("TARGET_NOT_FOUND", "user", e.to_string()),
             crate::error::AppError::BackupFailed(_) => ("FILE_BACKUP_FAILED", "server", e.to_string()),
             crate::error::AppError::RollbackFailed(_) => ("ROLLBACK_FAILED", "server", e.to_string()),
+            crate::error::AppError::RollbackBlocked => ("ROLLBACK_BLOCKED", "user", e.to_string()),
             crate::error::AppError::Keyring(_) => ("KEYCHAIN_UNAVAILABLE", "server", e.to_string()),
             _ => ("INTERNAL", "server", e.to_string()),
         };

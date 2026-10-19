@@ -57,6 +57,7 @@ pub fn run() {
             commands::account::account_logout,
             commands::account::account_status,
             commands::account::account_setup_key,
+            commands::account::account_bind_newapi,
             commands::account::account_send_code,
             commands::account::account_register,
             commands::account::account_send_password_reset,

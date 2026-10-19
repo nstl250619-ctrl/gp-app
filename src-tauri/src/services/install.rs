@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{self, types::{ApplyResult, DetectResult, InstallPlan, ModelSeed, WriteInput}};
+use crate::adapters::{self, types::{ApplyResult, DetectResult, ExtraBackup, InstallPlan, ModelSeed, WriteInput}};
 use crate::config;
 use crate::credential;
 use crate::error::{AppError, AppResult};
@@ -34,6 +34,9 @@ pub struct InstallRecord {
     pub created_at: String,
     pub status: String,
     pub backup_path: Option<String>,
+    /// 附加文件备份（一个 target 写多个文件时，如 DSH 的 .credentials.yaml），随主备份一起还原。
+    #[serde(default)]
+    pub extra_backups: Vec<ExtraBackup>,
 }
 
 fn resolve_ids(model_ids: Vec<String>) -> Vec<String> {
@@ -59,7 +62,15 @@ fn seeds_for(model_ids: &[String]) -> Vec<ModelSeed> {
 /// 服务地址白名单：导入配置只允许绿池官方网关（防任意 URL 注入用户配置文件）。
 const ALLOWED_BASE_URLS: [&str; 2] = ["https://api.greenpool.cn", "https://aigw.greenpool.cn"];
 
-fn normalize_base_url(base_url: Option<String>) -> AppResult<String> {
+/// Node 网络栈的客户端：没有 Happy Eyeballs（IPv6 失败不会回落 IPv4）。
+/// api.greenpool.cn 有 AAAA 记录，在「IPv6 半通」网络（手机热点/双层 NAT 宽带）会卡死超时；
+/// aigw 只有 A 记录且是同一网关，因此这些客户端统一写 aigw（功能等价、路径更稳）。
+const NODE_STACK_TARGETS: [&str; 4] = ["dsh", "claude", "openclaw", "hermes"];
+
+fn normalize_base_url(base_url: Option<String>, target: &str) -> AppResult<String> {
+    if NODE_STACK_TARGETS.contains(&target) {
+        return Ok(config::PROBE_BASE_URL.into());
+    }
     match base_url {
         None => Ok(config::DEFAULT_BASE_URL.into()),
         Some(u) => {
@@ -73,20 +84,21 @@ fn normalize_base_url(base_url: Option<String>) -> AppResult<String> {
     }
 }
 
-fn write_input(model_ids: Vec<String>, base_url: Option<String>) -> AppResult<WriteInput> {
+fn write_input(model_ids: Vec<String>, base_url: Option<String>, target: &str) -> AppResult<WriteInput> {
     let api_key = credential::get(config::CREDENTIAL_ACCOUNT_API_KEY)?.ok_or(AppError::KeyMissing)?;
-    Ok(WriteInput { base_url: normalize_base_url(base_url)?, api_key, model_ids })
+    Ok(WriteInput { base_url: normalize_base_url(base_url, target)?, api_key, model_ids })
 }
 
 /// 账号可用模型列表（分组过滤+去重），走网关 /api/user/models。
-/// 拉取失败时回退硬编码默认清单（保底可用）。
-pub async fn available_models() -> Vec<String> {
+/// 返回 (models, offline)：offline=true 表示网关拉取失败、回退离线清单（可能过期，UI 需提示）。
+pub async fn available_models() -> (Vec<String>, bool) {
+    let fallback = || config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match crate::services::account::ensure_session().await {
         Ok(_) => match crate::services::shop::gateway_models().await {
-            Ok(models) if !models.is_empty() => models,
-            _ => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
+            Ok(models) if !models.is_empty() => (models, false),
+            _ => (fallback(), true),
         },
-        Err(_) => config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect(),
+        Err(_) => (fallback(), true),
     }
 }
 
@@ -106,10 +118,19 @@ pub fn plan(
     data_dir: &PathBuf,
 ) -> AppResult<InstallPlan> {
     let ids = resolve_ids(model_ids);
-    let input = write_input(ids.clone(), base_url)?;
+    let user_picked_api = base_url.as_deref() == Some("https://api.greenpool.cn");
+    let input = write_input(ids.clone(), base_url, &target)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
-    adapter.plan(&input, &seeds, resolve_custom(custom_path, data_dir, &target).as_deref())
+    let mut p = adapter.plan(&input, &seeds, resolve_custom(custom_path, data_dir, &target).as_deref())?;
+    // 诚实告知：Node 系客户端选 api 会被强制改用 aigw（IPv6 半通网络下 api 必然超时）
+    if user_picked_api && NODE_STACK_TARGETS.contains(&target.as_str()) {
+        p.warnings.push(
+            "该客户端使用 Node 网络栈（不支持 IPv6→IPv4 回退），已自动改用 aigw.greenpool.cn（同一网关的纯 IPv4 线路）"
+                .into(),
+        );
+    }
+    Ok(p)
 }
 
 fn apply_locked(
@@ -120,7 +141,7 @@ fn apply_locked(
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
     let ids = resolve_ids(model_ids);
-    let input = write_input(ids.clone(), base_url)?;
+    let input = write_input(ids.clone(), base_url, &target)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
     let custom = resolve_custom(custom_path.clone(), data_dir, &target);
@@ -133,20 +154,35 @@ fn apply_locked(
 
     let mut records = load_records(data_dir)?;
 
-    // 托管态再次导入不产生新备份（adapter 跳过）→ 继承最近一次「GP 介入前」的还原点，
-    // 保证任意一条记录的「还原」都回到 GP 写入前的原始配置。
+    // 托管态再次导入不产生新备份（adapter 跳过）→ 继承「最近一次且内容干净」的还原点。
+    // 只认「备份可读 + 内容未被 GP 托管」的记录：旧版本链式备份（污染快照）不能作为还原点，
+    // 因此逐条向前找，直到找到真正的「配置前原始快照」。
     let mut backup_path = result.backup_path.clone();
     if backup_path.is_none() {
+        let adapter_ref = adapters::find_adapter(&target);
         backup_path = records
             .iter()
             .rev()
-            .find(|r| r.target == target && r.status != "rolled_back")
-            .and_then(|r| r.backup_path.clone());
+            .filter(|r| r.target == target && r.status != "rolled_back")
+            .filter_map(|r| r.backup_path.clone())
+            .find(|bp| {
+                let p = PathBuf::from(bp);
+                let readable = if p.exists() { Some(p) } else { find_mirror(&target, &p, data_dir) };
+                match (readable, adapter_ref.as_ref()) {
+                    (Some(path), Some(a)) => fs_atomic::read_string(&path)
+                        .map(|c| !a.is_managed_content(&c))
+                        .unwrap_or(false),
+                    _ => false,
+                }
+            });
     }
 
-    // 备份镜像到 GP 数据目录：目标同目录的 .bak 文件可能被客户端应用清理（实测 Codex 会清 .codex 下陌生文件）。
+    // 备份镜像到 GP 数据目录（按 target 分目录）：同目录 .bak 可能被客户端清理；分目录防同名覆盖。
     if let Some(bp) = &backup_path {
-        mirror_backup(Path::new(bp), data_dir);
+        mirror_backup(&target, Path::new(bp), data_dir);
+    }
+    for eb in &result.extra_backups {
+        mirror_backup(&target, Path::new(&eb.backup), data_dir);
     }
 
     let record = InstallRecord {
@@ -156,6 +192,7 @@ fn apply_locked(
         created_at: chrono::Local::now().to_rfc3339(),
         status: result.status.clone(),
         backup_path,
+        extra_backups: result.extra_backups.clone(),
     };
     records.push(record);
     save_records(data_dir, &records)?;
@@ -175,23 +212,28 @@ pub async fn apply_with_verify(
 ) -> AppResult<ApplyResult> {
     let mut result = {
         let _guard = lock()?;
-        apply_locked(target, model_ids.clone(), custom_path, base_url.clone(), data_dir)?
+        apply_locked(target.clone(), model_ids.clone(), custom_path, base_url.clone(), data_dir)?
     };
 
     if verify && result.verify_ok {
-        let model = resolve_ids(model_ids).into_iter().next().unwrap_or_default();
+        // 抽样验证最多 3 个模型：只验第一个会漏掉「部分模型在本分组无渠道」的情况
+        let models: Vec<String> = resolve_ids(model_ids).into_iter().take(3).collect();
         if let Ok(key) = crate::services::account::require_api_key() {
-            // 连通自测走用户选定的服务地址（默认 api，选 aigw 则测 aigw）
-            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url)?);
-            match client.verify_key(&key, &model).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    result.status = "connectivity_failed".into();
-                    result.message = "已写入，但连接未通过".into();
-                }
-                Err(_) => {
-                    result.status = "connectivity_failed".into();
-                    result.message = "已写入，但无法完成连接自测（可能离线）".into();
+            // 连通自测与实际写入保持一致（Node 系客户端会被 normalize 强制到 aigw）
+            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url, &target)?);
+            for model in models {
+                match client.verify_key(&key, &model).await {
+                    Ok(true) => continue,
+                    Ok(false) => {
+                        result.status = "connectivity_failed".into();
+                        result.message = format!("已写入，但模型 {} 连接未通过", model);
+                        break;
+                    }
+                    Err(_) => {
+                        result.status = "connectivity_failed".into();
+                        result.message = "已写入，但无法完成连接自测（可能离线）".into();
+                        break;
+                    }
                 }
             }
         }
@@ -199,7 +241,7 @@ pub async fn apply_with_verify(
     Ok(result)
 }
 
-pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
+pub fn rollback(record_id: String, force: bool, data_dir: &PathBuf) -> AppResult<()> {
     let _guard = lock()?;
     let records = load_records(data_dir)?;
     let rec = records
@@ -213,21 +255,16 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
     let backup = rec.backup_path.clone().ok_or_else(|| AppError::RollbackFailed("该记录无备份".into()))?;
     let adapter = adapters::find_adapter(&rec.target).ok_or(AppError::TargetNotFound)?;
 
-    // 同目录备份可能已被客户端应用清理 → 回退到 GP 数据目录里的镜像副本。
+    // 同目录备份可能已被客户端应用清理 → 回退到 GP 数据目录里的镜像副本（按 target 分目录，兼容旧扁平布局）。
     let backup_path = PathBuf::from(&backup);
     let backup_path = if backup_path.exists() {
         backup_path
+    } else if let Some(mirror) = find_mirror(&rec.target, &backup_path, data_dir) {
+        mirror
     } else {
-        let mirror = backup_mirrors_dir(data_dir).join(
-            backup_path.file_name().ok_or_else(|| AppError::RollbackFailed("备份路径非法".into()))?,
-        );
-        if mirror.exists() {
-            mirror
-        } else {
-            return Err(AppError::RollbackFailed(format!(
-                "备份文件已丢失（可能被客户端应用清理）：{}", backup
-            )));
-        }
+        return Err(AppError::RollbackFailed(format!(
+            "备份文件已丢失（可能被客户端应用清理）：{}", backup
+        )));
     };
 
     // 目标路径：优先记录的原路径（修 H2：防多版本/移动后把 A 的备份写进 B）；
@@ -247,15 +284,28 @@ pub fn rollback(record_id: String, data_dir: &PathBuf) -> AppResult<()> {
         .ok_or_else(|| AppError::RollbackFailed("找不到目标配置路径".into()))?;
 
     // 还原原则：只允许写回「执行配置前」的原始备份。
-    // 历史污染快照（内容已是 GP 托管态）直接拒绝，避免「还原了却还是 GP」的误导。
+    // 用 adapter 的精确托管判定（与 detect 同口径）——历史污染快照拒绝回退，合法原始备份照常放行。
+    // force=true：用户二次确认后强制还原（用于确认自己就是要回退到该快照）。
     let backup_content = fs_atomic::read_string(&backup_path)?;
-    if backup_looks_managed(&rec.target, &backup_content) {
-        return Err(AppError::RollbackFailed(
-            "该还原点是旧版本产生的 GP 配置快照（非配置前原始备份），已阻止回退；请手工恢复原始配置或重新导入后再还原".into(),
-        ));
+    if !force && adapter.is_managed_content(&backup_content) {
+        return Err(AppError::RollbackBlocked);
     }
 
     adapter.rollback(&backup_path, &target_path)?;
+
+    // 附加文件（如 DSH .credentials.yaml）一并还原：保证「还原 = 完全回到配置前」，密钥不残留。
+    for eb in &rec.extra_backups {
+        let bp = PathBuf::from(&eb.backup);
+        let bp = if bp.exists() {
+            bp
+        } else if let Some(m) = find_mirror(&rec.target, &bp, data_dir) {
+            m
+        } else {
+            return Err(AppError::RollbackFailed(format!("附加备份已丢失：{}", eb.backup)));
+        };
+        let content = fs_atomic::read_string(&bp)?;
+        fs_atomic::atomic_write(Path::new(&eb.target), &content)?;
+    }
 
     let mut records = records;
     if let Some(r) = records.iter_mut().find(|r| r.id == record_id) {
@@ -271,38 +321,32 @@ pub fn history(data_dir: &PathBuf) -> AppResult<Vec<InstallRecord>> {
     Ok(records)
 }
 
-/// 备份内容是否已是「GP 托管态」——用于拦截历史版本产生的污染还原点。
-/// 背景：2026-10-18 之前的版本在托管态重复导入时会备份「上一次 GP 写入后」的文件，
-/// 这类快照写回后仍保留 GP 配置，违背「还原 = 回到配置前」原则。
-fn backup_looks_managed(target: &str, content: &str) -> bool {
-    match target {
-        // WorkBuddy / CodeBuddy：托管条目 name 固定为 "GP"（MANAGED_MODEL_NAME）
-        "workbuddy" | "codebuddy" => {
-            content.contains("\"name\": \"GP\"") || content.contains("\"name\":\"GP\"")
-        }
-        // Codex：GP provider id 固定 "gp"
-        "codex" => content.contains("model_provider") && content.contains("= \"gp\""),
-        // Claude Code：ANTHROPIC_BASE_URL 指向 greenpool
-        "claude" => content.contains("ANTHROPIC_BASE_URL") && content.contains("greenpool"),
-        // OpenClaw / DSH / Hermes：provider 段含 greenpool
-        "openclaw" | "dsh" | "hermes" => content.contains("greenpool") && content.contains("provider"),
-        _ => false,
-    }
-}
-
-/// 备份镜像目录：<data_dir>/backups/。
+/// 备份镜像根目录：<data_dir>/backups/。
 fn backup_mirrors_dir(data_dir: &PathBuf) -> PathBuf {
     data_dir.join("backups")
 }
 
 /// 把同目录备份复制一份到 GP 数据目录（尽力而为，失败不阻断导入）。
-fn mirror_backup(backup: &Path, data_dir: &PathBuf) {
+/// 按 target 分目录：WorkBuddy 与 CodeBuddy 都用 models.json，扁平存放会同名覆盖 / 跨目标串台。
+fn mirror_backup(target: &str, backup: &Path, data_dir: &PathBuf) {
     let Some(name) = backup.file_name() else { return };
-    let dir = backup_mirrors_dir(data_dir);
+    let dir = backup_mirrors_dir(data_dir).join(target);
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
     let _ = std::fs::copy(backup, dir.join(name));
+}
+
+/// 查找镜像副本：新布局 `<backups>/<target>/<name>`，并兼容旧版扁平布局 `<backups>/<name>`。
+fn find_mirror(target: &str, backup: &Path, data_dir: &PathBuf) -> Option<PathBuf> {
+    let name = backup.file_name()?;
+    let base = backup_mirrors_dir(data_dir);
+    let scoped = base.join(target).join(name);
+    if scoped.exists() {
+        return Some(scoped);
+    }
+    let legacy = base.join(name);
+    legacy.exists().then_some(legacy)
 }
 
 fn lock() -> AppResult<std::sync::MutexGuard<'static, ()>> {

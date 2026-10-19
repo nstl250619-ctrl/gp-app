@@ -172,6 +172,7 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
         let verify_ok = verify_models && verify_avail;
 
         Ok(ApplyResult {
+            extra_backups: Vec::new(),
             status: if verify_ok { "applied".into() } else { "failed".into() },
             path: path.display().to_string(),
             backup_path: backup.map(|b| b.display().to_string()),
@@ -182,6 +183,10 @@ impl super::ConfigAdapter for ModelsJsonAdapter {
     }
 
     /// 按记录的目标路径还原（不重新探测），备份内容原子写回 + 摘要校验。
+    fn is_managed_content(&self, raw: &str) -> bool {
+        normalize(raw).models.iter().any(is_managed_entry)
+    }
+
     fn rollback(&self, backup: &Path, target: &Path) -> AppResult<()> {
         if !backup.exists() {
             return Err(AppError::RollbackFailed("备份文件不存在".into()));

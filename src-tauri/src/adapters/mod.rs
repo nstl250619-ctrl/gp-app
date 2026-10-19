@@ -25,6 +25,12 @@ pub trait ConfigAdapter: Send + Sync {
     fn apply(&self, input: &WriteInput, seeds: &[ModelSeed], custom_path: Option<&Path>) -> AppResult<ApplyResult>;
     /// 按备份还原到指定目标路径（不重新探测，避免多版本/移动后写错文件）。
     fn rollback(&self, backup: &Path, target: &Path) -> AppResult<()>;
+    /// 判断「某份配置内容」是否已处于 GP 托管态（与 detect 同口径）。
+    /// 用途：还原点校验——备份内容若已是托管态，说明它不是「配置前原始快照」，不能作为还原点。
+    /// 默认 false（宁可放行，也不能误杀用户合法备份）。
+    fn is_managed_content(&self, _raw: &str) -> bool {
+        false
+    }
 }
 
 pub fn all_adapters() -> Vec<Box<dyn ConfigAdapter>> {
