@@ -363,7 +363,9 @@ fn load_records(data_dir: &PathBuf) -> AppResult<Vec<InstallRecord>> {
         return Ok(Vec::new());
     }
     let raw = std::fs::read_to_string(&p)?;
-    serde_json::from_str(&raw).map_err(|e| {
+    // 容错：外部工具（如 PowerShell 5.x Out-File）改写后可能带 UTF-8 BOM，serde_json 不接受，剥掉再解析。
+    let raw = raw.trim_start_matches('\u{FEFF}');
+    serde_json::from_str(raw).map_err(|e| {
         AppError::Other(format!("安装记录文件损坏，无法读取（可删除后重试）：{}", e))
     })
 }
