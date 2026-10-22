@@ -36,6 +36,13 @@ pub async fn account_setup_key() -> CommandResult<SetupKeyResult> {
     respond(services::account::setup_key().await)
 }
 
+/// 确保 DSH 专属 key 就绪（幂等）：无则创建（group=DSH-Only）并写入独立钥匙串条目。
+/// 登录时已自动执行；此命令供前端在 key 列表缺失 DSH-Only 时兜底重试。
+#[tauri::command]
+pub async fn account_setup_dsh_key() -> CommandResult<SetupKeyResult> {
+    respond(services::account::setup_dsh_key().await)
+}
+
 /// 绑定中转站账号（SSO 失败引导，契约 4.2）：仅中转站已有该账号时使用。
 #[tauri::command]
 pub async fn account_bind_newapi(username: String, password: String) -> CommandResult<SimpleAck> {

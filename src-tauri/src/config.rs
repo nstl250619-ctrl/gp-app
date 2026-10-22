@@ -38,6 +38,12 @@ pub const CREDENTIAL_SERVICE: &str = "cn.greenpool.gp";
 pub const CREDENTIAL_ACCOUNT_API_KEY: &str = "newapi_api_key";
 /// 当前选中的 new-api 令牌 id（密钥卡下拉选择的落点）。
 pub const CREDENTIAL_ACCOUNT_KEY_TOKEN_ID: &str = "newapi_key_token_id";
+/// DSH 专属 key 的明文（独立钥匙串条目，与通用 key 分离；DSH IDE 卡导入时使用）。
+pub const CREDENTIAL_DSH_API_KEY: &str = "dsh_api_key";
+/// DSH 专属令牌名（new-api 侧分组/令牌约定名，注册后自动创建；按名字识别）。
+pub const DSH_TOKEN_NAME: &str = "DSH-Only";
+/// DSH 专属分组名（new-api 侧分组码，与令牌名同名但语义独立：用于 ?group= 查询与复用校验）。
+pub const DSH_GROUP: &str = "DSH-Only";
 pub const CREDENTIAL_ACCOUNT_TOKEN: &str = "newapi_access_token";
 pub const CREDENTIAL_ACCOUNT_USERNAME: &str = "newapi_username";
 pub const CREDENTIAL_ACCOUNT_USER_ID: &str = "newapi_user_id";
@@ -45,6 +51,18 @@ pub const CREDENTIAL_ACCOUNT_USER_ID: &str = "newapi_user_id";
 pub const CREDENTIAL_ACCOUNT_EMAIL: &str = "newapi_email";
 /// 登录密码（仅钥匙串）：new-api 会话令牌有过期时间，失效时静默重登换新。
 pub const CREDENTIAL_ACCOUNT_PASSWORD: &str = "newapi_password";
+
+// ---- 隧道子系统（GPHub 核心增量迁入）----
+/// SSH 私钥存钥匙串（内嵌私钥 → keyring，绝不再进 exe/源码）。
+pub const CREDENTIAL_SSH_PRIVATE_KEY: &str = "ssh_private_key";
+/// Tauri IPC 事件通道（替代 GPHub 的 8737 HTTP 推送）。
+pub const TUNNEL_EVENT_STATUS: &str = "tunnel://status";
+pub const TUNNEL_EVENT_LOG: &str = "tunnel://log";
+/// 隧道本地转发地址（产品决策：隧道运行中时一键配置的 base_url 静默替换为它，对用户透明）。
+pub const TUNNEL_BASE_URL: &str = "http://127.0.0.1:3000";
+/// 直链加速总开关（产品决策）：false = 功能未启用（前端按钮禁用 + 后端 start 拒绝 + SSH 凭据占位）。
+/// 上线时改 true 并恢复 secrets.rs / tunnel.rs / secrets.enc 的真实凭据。
+pub const TURBO_ENABLED: bool = false;
 
 // ---- WorkBuddy 配置写入常量（§11.6 原文） ----
 pub const MANAGED_MODEL_NAME: &str = "GP";

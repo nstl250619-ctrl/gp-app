@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { History, Settings as SettingsIcon, Store, Ticket, Wand2 } from 'lucide-react';
+import { History, Settings as SettingsIcon, Store, Ticket, Wand2, Zap } from 'lucide-react';
 import { Gauge } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
 import { invokeCommand } from './services/ipc';
-import type { AppStatus, InstanceCapability } from './types/ipc';
+import type { AppStatus, InstanceCapability, TunnelStatus } from './types/ipc';
 import { checkForUpdate, downloadAndInstall, isAutoUpdateOn } from './utils/updater';
 import LoginScreen from './modules/auth/LoginScreen';
 import LoginBackdrop from './modules/auth/LoginBackdrop';
@@ -50,6 +51,80 @@ const EMPTY_STATUS: AppStatus = {
   shopReady: false,
 };
 
+/// 直链加速总开关（产品决策）：false = 功能暂不启用（启动/停止禁用、SSH 凭据为占位），
+/// 确认上线时改 true 并恢复 secrets.rs / tunnel.rs / secrets.enc 的真实凭据。
+const TURBO_ENABLED = false;
+
+/// 直链加速卡片（会员功能公告卡）：无独立页面，侧栏公告式卡片。
+/// 状态映射：stopped→启动(可点) / connecting→连接中 / reconnecting→重试中 /
+/// connected|degraded→运行中 / error→重试(可点，start 在 error 态语义为取消旧轮次重启)。
+function TurboCard({ tunnel }: { tunnel: TunnelStatus | null }) {
+  const phase = tunnel?.phase ?? 'stopped';
+  const canStart = TURBO_ENABLED && (phase === 'stopped' || phase === 'error');
+  const startLabel =
+    phase === 'connected' || phase === 'degraded'
+      ? t('turbo.running')
+      : phase === 'connecting' || phase === 'reconnecting'
+        ? t('turbo.connecting')
+        : phase === 'error'
+          ? t('turbo.retry')
+          : t('turbo.start');
+  const statusLabel =
+    phase === 'connected' || phase === 'degraded'
+      ? t('turbo.statusRunning')
+      : phase === 'connecting' || phase === 'reconnecting'
+        ? t('turbo.statusConnecting')
+        : phase === 'error'
+          ? t('turbo.statusError')
+          : t('turbo.statusStopped');
+  const dotClass =
+    phase === 'connected'
+      ? 'dot dot--ok'
+      : phase === 'degraded' || phase === 'connecting' || phase === 'reconnecting'
+        ? 'dot dot--connecting'
+        : phase === 'error'
+          ? 'dot dot--danger'
+          : 'dot';
+  return (
+    <div className="turbo-card" title={tunnel?.message || ''}>
+      <div className="turbo-card__head">
+        <Zap size={14} className="turbo-card__icon" />
+        <span className="turbo-card__title">{t('turbo.title')}</span>
+        <span className="turbo-card__badge">{t('turbo.badge')}</span>
+      </div>
+      <ul className="turbo-card__features">
+        {[t('turbo.feature1'), t('turbo.feature2'), t('turbo.feature3'), t('turbo.feature4'), t('turbo.feature5')].map((f) => (
+          <li key={f}>{f}</li>
+        ))}
+      </ul>
+      <div className="turbo-card__actions">
+        <button
+          type="button"
+          className="turbo-btn turbo-btn--primary"
+          disabled={!canStart}
+          title={TURBO_ENABLED ? undefined : t('turbo.comingSoon')}
+          onClick={() => invokeCommand('tunnel.start', {}).catch(() => {})}
+        >
+          {startLabel}
+        </button>
+        <button
+          type="button"
+          className="turbo-btn"
+          disabled={!TURBO_ENABLED || phase === 'stopped'}
+          title={TURBO_ENABLED ? undefined : t('turbo.comingSoon')}
+          onClick={() => invokeCommand('tunnel.stop', {}).catch(() => {})}
+        >
+          {t('turbo.stop')}
+        </button>
+      </div>
+      <div className="turbo-card__status">
+        <span className={dotClass} />
+        <span>{statusLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [page, setPage] = useState<PageKey>('config');
   // 页面保活：首次访问挂载，之后仅切换可见性（切页瞬时、状态不丢）
@@ -58,6 +133,26 @@ export default function App() {
   const [version, setVersion] = useState('');
   // 登录态：null=检测中，否则以 loggedIn 分流（§16 登录门面）
   const [auth, setAuth] = useState<AppStatus | null>(null);
+  // 隧道状态（底部导航启动/停止控件用）：事件驱动，无独立页面
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+
+  useEffect(() => {
+    invokeCommand<TunnelStatus>('tunnel.status', {}).then(setTunnel).catch(() => {});
+    let disposed = false;
+    let off: (() => void) | undefined;
+    listen<TunnelStatus>('tunnel://status', (e) => {
+      if (!disposed) setTunnel(e.payload);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else off = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, []);
 
   const refreshProbe = useCallback(() => {
     invokeCommand<InstanceCapability>('instance.probe', {}).then(setProbe).catch(() => {});
@@ -176,6 +271,7 @@ export default function App() {
         >
           QQ:237525313
         </button>
+        <TurboCard tunnel={tunnel} />
         <nav className="sidebar__nav" style={{ paddingBottom: 'var(--space-3)' }}>{renderNav(BOTTOM_NAV)}</nav>
       </aside>
 

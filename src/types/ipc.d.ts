@@ -290,3 +290,56 @@ export interface CredentialStatus {
   available: boolean;
   hasApiKey: boolean;
 }
+
+// ---- 隧道子系统（GPHub 融合）----
+
+export type TunnelPhase =
+  | 'stopped'
+  | 'connecting'
+  | 'connected'
+  | 'degraded'
+  | 'reconnecting'
+  | 'error';
+
+export type ApiState = 'ok' | 'fail' | 'unchecked';
+
+export interface Forward {
+  id: string;
+  name: string;
+  localPort: number;
+  targetPort: number;
+  enabled: boolean;
+  probePath?: string | null;
+  probeSuccessStatus: number[];
+}
+
+export interface HealthPoint {
+  endpoint: string;
+  listenOk: boolean;
+  apiState: ApiState;
+  lastError?: string | null;
+}
+
+export interface TunnelStatus {
+  phase: TunnelPhase;
+  message: string;
+  connectedAt?: number | null;
+  lastConnectMs?: number | null;
+  hasKey: boolean;
+  reconnectCount: number;
+  sshAlive: boolean;
+  health: HealthPoint[];
+  forwards: Forward[];
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  listenMs?: number | null;
+  apiMs?: number | null;
+  error?: string | null;
+}
+
+export interface ImportKeyResult {
+  ok: boolean;
+  keyFingerprint?: string | null;
+}

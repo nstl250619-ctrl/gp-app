@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tunnel-restart"
+description = "Enables the tunnel_restart command without any pre-configured scope."
+commands.allow = ["tunnel_restart"]
+
+[[permission]]
+identifier = "deny-tunnel-restart"
+description = "Denies the tunnel_restart command without any pre-configured scope."
+commands.deny = ["tunnel_restart"]

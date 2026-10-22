@@ -65,6 +65,7 @@ pub async fn login(identifier: String, password: String) -> AppResult<AccountSta
     if !same_account {
         let _ = credential::delete(config::CREDENTIAL_ACCOUNT_API_KEY);
         let _ = credential::delete(config::CREDENTIAL_ACCOUNT_KEY_TOKEN_ID);
+        let _ = credential::delete(config::CREDENTIAL_DSH_API_KEY);
     }
     // 网关登录已存 SHOP_AUTH_TOKEN / SHOP_USER_ID；补齐账号信息 + 密码供静默重登。
     credential::set(config::CREDENTIAL_ACCOUNT_USERNAME, &user.username)?;
@@ -75,6 +76,7 @@ pub async fn login(identifier: String, password: String) -> AppResult<AccountSta
     // 登录后自动确保密钥就绪（幂等：有同名 key 直接取明文，无则自动创建）。
     // 旧版靠已移除的总览页「生成密钥」兜底；失败不阻断登录（配置页会再兜底重试）。
     let _ = setup_key().await;
+    let _ = setup_dsh_key().await;
     Ok(current_status())
 }
 
@@ -120,6 +122,7 @@ pub async fn register(email: String, password: String, code: String) -> AppResul
     shop::register(&email, code.trim(), &password).await?;
     let _ = login(email, password).await?;
     let _ = setup_key().await;
+    let _ = setup_dsh_key().await;
     Ok(current_status())
 }
 
@@ -132,6 +135,7 @@ pub fn logout() -> AppResult<()> {
         config::CREDENTIAL_ACCOUNT_USER_ID,
         config::CREDENTIAL_ACCOUNT_API_KEY,
         config::CREDENTIAL_ACCOUNT_KEY_TOKEN_ID,
+        config::CREDENTIAL_DSH_API_KEY,
         config::CREDENTIAL_ACCOUNT_PASSWORD,
         config::CREDENTIAL_ACCOUNT_EMAIL,
         config::SHOP_PASSWORD,
@@ -171,7 +175,7 @@ pub async fn setup_key() -> AppResult<SetupKeyResult> {
     let token_id = match chosen {
         Some(id) => id,
         None => {
-            shop::gateway_create_key(TOKEN_NAME).await?;
+            shop::gateway_create_key(TOKEN_NAME, None).await?;
             let items = shop::gateway_list_keys().await.unwrap_or_default();
             items
                 .iter()
@@ -202,6 +206,37 @@ fn persist_key(key: &str, token_id: i64) -> AppResult<SetupKeyResult> {
     credential::set(config::CREDENTIAL_ACCOUNT_API_KEY, key)?;
     credential::set(config::CREDENTIAL_ACCOUNT_KEY_TOKEN_ID, &token_id.to_string())?;
     Ok(SetupKeyResult { token_name: String::new(), masked_key: mask(key) })
+}
+
+/// 建 DSH 专属 key（幂等）：复用同名启用令牌 → 新建（group=DSH-Only）→ 取明文存独立钥匙串条目。
+/// 失败不阻断登录/注册（与 setup_key 同策略）；DSH 卡导入时若无专属 key，C3 会回退通用 key。
+pub async fn setup_dsh_key() -> AppResult<SetupKeyResult> {
+    let _ = ensure_session().await?;
+    let items = shop::gateway_list_keys().await.unwrap_or_default();
+    let existing = items.iter().find(|t| t.status == 1 && t.name == config::DSH_TOKEN_NAME);
+    let token_id = match existing {
+        // V4：复用同名令牌时校验分组——分组非空且不匹配则报错，防「名字对但分组错」的令牌被误用。
+        Some(t) if !t.group.is_empty() && t.group != config::DSH_GROUP => {
+            return Err(AppError::Other(format!(
+                "已存在同名令牌「{}」但分组为「{}」，请到站点令牌页将其分组改为「{}」",
+                t.name, t.group, config::DSH_GROUP
+            )));
+        }
+        Some(t) => t.id,
+        None => {
+            shop::gateway_create_key(config::DSH_TOKEN_NAME, Some(config::DSH_GROUP)).await?;
+            let items = shop::gateway_list_keys().await.unwrap_or_default();
+            items
+                .iter()
+                .find(|t| t.name == config::DSH_TOKEN_NAME && t.status == 1)
+                .map(|t| t.id)
+                .ok_or_else(|| AppError::Other("DSH 专属令牌已创建但未能定位，请到站点令牌页查看".into()))?
+        }
+    };
+    let key = shop::gateway_key_plain(token_id).await?;
+    // 独立钥匙串条目（与通用 key 分离），C3 写入时按 target==dsh 读取
+    credential::set(config::CREDENTIAL_DSH_API_KEY, &key)?;
+    Ok(SetupKeyResult { token_name: config::DSH_TOKEN_NAME.into(), masked_key: mask(&key) })
 }
 
 /// 账号在网关的 key 列表（含选中标记），走网关。绝不返回明文。

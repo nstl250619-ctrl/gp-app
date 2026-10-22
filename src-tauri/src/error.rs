@@ -55,6 +55,22 @@ pub enum AppError {
     #[error("该还原点是 GP 配置快照（非配置前原始备份），需确认后才能还原")]
     RollbackBlocked,
 
+    /// 隧道子系统错误（ssh.exe 启动/巡检失败等）。
+    #[error("隧道错误：{0}")]
+    Tunnel(String),
+
+    /// 缺少 pinned host key：拒绝以 TOFU 方式连接。
+    #[error("缺少服务端 host key，无法建立严格校验的隧道")]
+    HostKeyMissing,
+
+    /// host key 指纹与编译期常量不符：疑似中间人或服务器被替换。
+    #[error("服务端 host key 指纹不匹配，已拒绝连接")]
+    HostKeyMismatch,
+
+    /// SSH 私钥未导入钥匙串。
+    #[error("尚未导入 SSH 私钥")]
+    SshKeyMissing,
+
     #[error("{0}")]
     Other(String),
 }

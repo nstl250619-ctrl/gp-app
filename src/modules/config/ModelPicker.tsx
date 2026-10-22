@@ -6,15 +6,16 @@ interface Props {
   available: string[];
   selected: string[];
   single?: boolean;
+  showTitle?: boolean;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
 }
 
-export default function ModelPicker({ available, selected, single = false, onToggle, onSelectAll, onClear }: Props) {
+export default function ModelPicker({ available, selected, single = false, showTitle = true, onToggle, onSelectAll, onClear }: Props) {
   return (
     <>
-      <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.selectModels')}</div>
+      {showTitle && <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.selectModels')}</div>}
       <div className="model-picker">
         <div className="model-picker__head">
           {!single && <button type="button" className="link-btn" onClick={onSelectAll}>{t('config.selectAll')}</button>}

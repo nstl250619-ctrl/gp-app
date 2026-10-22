@@ -6,4 +6,5 @@ pub mod credential;
 pub mod install;
 pub mod instance;
 pub mod shop;
+pub mod tunnel;
 pub mod usage;

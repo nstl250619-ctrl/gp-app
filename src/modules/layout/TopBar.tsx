@@ -1,5 +1,6 @@
-// 顶栏（§16 主界面重构）：logo + 服务徽章 + 账号邮箱 + 头像。
+// 顶栏（§16 主界面重构）：品牌 logo 图 + 服务徽章 + 账号邮箱 + 头像。
 import { t } from '@/i18n';
+import brandLogo from '@/assets/brand-logo.png';
 
 interface Props {
   username: string;
@@ -12,11 +13,8 @@ export default function TopBar({ username, newapiOk, shopReady }: Props) {
 
   return (
     <header className="topbar">
-      <span className="topbar__logo" />
-      <span className="topbar__name">
-        {t('nav.appTitle')}
-        <span className="topbar__tag">· GreenPool</span>
-      </span>
+      <img src={brandLogo} alt="GreenPool" className="topbar__logo" />
+      <span className="topbar__name">{t('nav.appTitle')}</span>
       <div className="topbar__badges">
         <span className="topbar__badge">
           <span className={`dot ${newapiOk ? 'dot--ok' : 'dot--warn'}`} />

@@ -21,10 +21,11 @@ pub fn install_detect(state: State<AppState>) -> CommandResult<Vec<DetectResult>
     respond(services::install::detect(&state.data_dir))
 }
 
-/// 账号可用模型列表（勾选导入用）；拉取失败回退默认清单并标记 offline。
+/// 账号可用模型列表（勾选导入用）；DSH 卡返回 DSH-Only 分组模型，其他卡返回账号级模型。
+/// 拉取失败回退默认清单并标记 offline。
 #[tauri::command]
-pub async fn install_available_models() -> CommandResult<AvailableModels> {
-    let (models, offline) = services::install::available_models().await;
+pub async fn install_available_models(target: String) -> CommandResult<AvailableModels> {
+    let (models, offline) = services::install::available_models(&target).await;
     CommandResult::ok(AvailableModels { models, offline })
 }
 

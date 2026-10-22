@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tunnel-import-key"
+description = "Enables the tunnel_import_key command without any pre-configured scope."
+commands.allow = ["tunnel_import_key"]
+
+[[permission]]
+identifier = "deny-tunnel-import-key"
+description = "Denies the tunnel_import_key command without any pre-configured scope."
+commands.deny = ["tunnel_import_key"]

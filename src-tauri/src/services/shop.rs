@@ -686,8 +686,12 @@ pub async fn gateway_subscription() -> AppResult<Option<SubscriptionInfo>> {
 }
 
 /// 账号可用模型（分组过滤+去重），经网关 /api/user/models。
-pub async fn gateway_models() -> AppResult<Vec<String>> {
-    gateway_get("/api/user/models").await
+/// group 指定时按该分组过滤（如 DSH-Only），None 为账号级全量。
+pub async fn gateway_models(group: Option<&str>) -> AppResult<Vec<String>> {
+    match group {
+        Some(g) => gateway_get(&format!("/api/user/models?group={}", g)).await,
+        None => gateway_get("/api/user/models").await,
+    }
 }
 
 /// 令牌列表（脱敏），经网关 /api/user/keys。
@@ -695,9 +699,13 @@ pub async fn gateway_list_keys() -> AppResult<Vec<crate::newapi::TokenListItem>>
     gateway_get("/api/user/keys").await
 }
 
-/// 建令牌，经网关 /api/user/keys。
-pub async fn gateway_create_key(name: &str) -> AppResult<()> {
-    gateway_post::<serde_json::Value>("/api/user/keys", json!({ "name": name }))
+/// 建令牌，经网关 /api/user/keys。group 可指定令牌归属分组（如 DSH-Only），None 用默认分组。
+pub async fn gateway_create_key(name: &str, group: Option<&str>) -> AppResult<()> {
+    let mut body = json!({ "name": name });
+    if let Some(g) = group {
+        body["group"] = json!(g);
+    }
+    gateway_post::<serde_json::Value>("/api/user/keys", body)
         .await
         .map(|_| ())
 }

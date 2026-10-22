@@ -80,6 +80,9 @@ pub struct TokenListItem {
     pub status: i64,
     #[serde(default)]
     pub created_time: i64,
+    /// 令牌归属分组（如 default / DSH-Only / 月卡组-1）。网关未透传时为空字符串。
+    #[serde(default)]
+    pub group: String,
 }
 
 /// 通用分页信封 data：{ items: [...] }。items 缺键归 None（不能加 serde(default)，

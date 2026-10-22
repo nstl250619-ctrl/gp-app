@@ -2,7 +2,9 @@
 
 pub mod account;
 pub mod install;
+pub mod secrets;
 pub mod shop;
+pub mod tunnel;
 pub mod usage;
 
 /// 共享 reqwest Client 构造器（去重：shop / newapi 两处原先各自 builder，逻辑一致）。

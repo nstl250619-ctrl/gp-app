@@ -67,7 +67,20 @@ const ALLOWED_BASE_URLS: [&str; 2] = ["https://api.greenpool.cn", "https://aigw.
 /// aigw 只有 A 记录且是同一网关，因此这些客户端统一写 aigw（功能等价、路径更稳）。
 const NODE_STACK_TARGETS: [&str; 4] = ["dsh", "claude", "openclaw", "hermes"];
 
-fn normalize_base_url(base_url: Option<String>, target: &str) -> AppResult<String> {
+/// 隧道是否处于「已连接」：仅在 connected 态做 base_url 静默替换（degraded/reconnecting 不替换，行为可预期）。
+fn tunnel_connected(data_dir: &PathBuf) -> bool {
+    matches!(
+        crate::services::tunnel::status(data_dir).phase,
+        crate::services::tunnel::TunnelPhase::Connected
+    )
+}
+
+fn normalize_base_url(base_url: Option<String>, target: &str, data_dir: &PathBuf) -> AppResult<String> {
+    // 隧道加速（产品决策）：隧道运行中时，所有 target 的 base_url 统一用本地转发地址。
+    // 前端服务地址下拉照旧显示官方域名，此处对用户透明替换。
+    if tunnel_connected(data_dir) {
+        return Ok(config::TUNNEL_BASE_URL.into());
+    }
     if NODE_STACK_TARGETS.contains(&target) {
         return Ok(config::PROBE_BASE_URL.into());
     }
@@ -84,20 +97,54 @@ fn normalize_base_url(base_url: Option<String>, target: &str) -> AppResult<Strin
     }
 }
 
-fn write_input(model_ids: Vec<String>, base_url: Option<String>, target: &str) -> AppResult<WriteInput> {
-    let api_key = credential::get(config::CREDENTIAL_ACCOUNT_API_KEY)?.ok_or(AppError::KeyMissing)?;
-    Ok(WriteInput { base_url: normalize_base_url(base_url, target)?, api_key, model_ids })
+/// 按 target 取实际使用的 API key：DSH 卡用专属 key，其他用通用 key。
+/// 写入（write_input）与连通自测（apply 的 verify）必须用同一把——否则自测会拿错分组的 key 误报「连接未通过」。
+fn api_key_for(target: &str) -> AppResult<String> {
+    if target == "dsh" {
+        // DSH 专属 key 缺失直接报错，不静默回退通用 key（否则 UI 锁定显示 DSH-Only 却写入通用 key，破坏隔离）。
+        credential::get(config::CREDENTIAL_DSH_API_KEY)?
+            .ok_or_else(|| AppError::Other("DSH 专属密钥未就绪，请重新登录后再试".into()))
+    } else {
+        credential::get(config::CREDENTIAL_ACCOUNT_API_KEY)?.ok_or(AppError::KeyMissing)
+    }
+}
+
+/// 把网关自测错误翻译成简短的用户可读文案（去掉 request id 等冗余、映射常见错误）。
+fn friendly_verify_error(raw: &str) -> String {
+    let core = raw.split(" (request id").next().unwrap_or(raw).trim();
+    let lowered = core.to_lowercase();
+    if lowered.contains("quota") {
+        "账号额度不足，请先充值或兑换后再试".into()
+    } else if lowered.contains("invalid token") {
+        "密钥无效或已失效，请重新登录后再试".into()
+    } else if lowered.contains("no available channel") {
+        "该模型暂无可用渠道".into()
+    } else if lowered.contains("channel disabled") {
+        "该渠道已停用".into()
+    } else {
+        core.to_string()
+    }
+}
+
+fn write_input(model_ids: Vec<String>, base_url: Option<String>, target: &str, data_dir: &PathBuf) -> AppResult<WriteInput> {
+    let api_key = api_key_for(target)?;
+    Ok(WriteInput { base_url: normalize_base_url(base_url, target, data_dir)?, api_key, model_ids })
 }
 
 /// 账号可用模型列表（分组过滤+去重），走网关 /api/user/models。
+/// DSH 卡按专属分组（DSH-Only）拉取；其他卡按账号级（不带 group）。
 /// 返回 (models, offline)：offline=true 表示网关拉取失败、回退离线清单（可能过期，UI 需提示）。
-pub async fn available_models() -> (Vec<String>, bool) {
+pub async fn available_models(target: &str) -> (Vec<String>, bool) {
     let fallback = || config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let group = if target == "dsh" { Some(config::DSH_GROUP) } else { None };
     match crate::services::account::ensure_session().await {
-        Ok(_) => match crate::services::shop::gateway_models().await {
+        Ok(_) => match crate::services::shop::gateway_models(group).await {
             Ok(models) if !models.is_empty() => (models, false),
+            // DSH 卡失败不回退通用清单：返回空列表 + offline，由 UI 提示，防专属隔离被通用模型击穿。
+            _ if target == "dsh" => (Vec::new(), true),
             _ => (fallback(), true),
         },
+        Err(_) if target == "dsh" => (Vec::new(), true),
         Err(_) => (fallback(), true),
     }
 }
@@ -119,7 +166,7 @@ pub fn plan(
 ) -> AppResult<InstallPlan> {
     let ids = resolve_ids(model_ids);
     let user_picked_api = base_url.as_deref() == Some("https://api.greenpool.cn");
-    let input = write_input(ids.clone(), base_url, &target)?;
+    let input = write_input(ids.clone(), base_url, &target, data_dir)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
     let mut p = adapter.plan(&input, &seeds, resolve_custom(custom_path, data_dir, &target).as_deref())?;
@@ -141,7 +188,7 @@ fn apply_locked(
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
     let ids = resolve_ids(model_ids);
-    let input = write_input(ids.clone(), base_url, &target)?;
+    let input = write_input(ids.clone(), base_url, &target, data_dir)?;
     let adapter = adapters::find_adapter(&target).ok_or(AppError::TargetNotFound)?;
     let seeds = seeds_for(&ids);
     let custom = resolve_custom(custom_path.clone(), data_dir, &target);
@@ -218,15 +265,15 @@ pub async fn apply_with_verify(
     if verify && result.verify_ok {
         // 抽样验证最多 3 个模型：只验第一个会漏掉「部分模型在本分组无渠道」的情况
         let models: Vec<String> = resolve_ids(model_ids).into_iter().take(3).collect();
-        if let Ok(key) = crate::services::account::require_api_key() {
-            // 连通自测与实际写入保持一致（Node 系客户端会被 normalize 强制到 aigw）
-            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url, &target)?);
+        if let Ok(key) = api_key_for(&target) {
+            // 连通自测与实际写入保持一致（Node 系客户端会被 normalize 强制到 aigw；隧道中走本地转发）
+            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url, &target, data_dir)?);
             for model in models {
                 match client.verify_key(&key, &model).await {
-                    Ok(true) => continue,
-                    Ok(false) => {
+                    Ok(Ok(())) => continue,
+                    Ok(Err(reason)) => {
                         result.status = "connectivity_failed".into();
-                        result.message = format!("已写入，但模型 {} 连接未通过", model);
+                        result.message = format!("已写入，但模型 {} 连接未通过：{}", model, friendly_verify_error(&reason));
                         break;
                     }
                     Err(_) => {
@@ -416,4 +463,50 @@ fn resolve_custom(custom_path: Option<String>, data_dir: &PathBuf, target: &str)
         let overrides = load_overrides(data_dir);
         override_of(&overrides, target)
     })
+}
+
+/// 隧道 base_url 改写（产品方案 B）：把「已安装工具配置里 GP 写入的 base_url」在官方域名 ↔ 隧道地址之间互换。
+/// 只改 has_managed_entry（GP 托管）的工具；文本级替换，/v1、/v1/chat/completions 等后缀自动保留。
+/// to_tunnel=true：官方 → 隧道；false：隧道 → 官方（统一回 aigw，纯 IPv4 更稳的直连线路）。
+pub fn rewrite_base_urls(data_dir: &Path, to_tunnel: bool) -> AppResult<usize> {
+    let overrides = load_overrides(&data_dir.to_path_buf());
+    let mut count = 0usize;
+    for a in adapters::all_adapters() {
+        if let Ok(det) = a.detect(override_of(&overrides, a.id()).as_deref()) {
+            if det.detected && det.has_managed_entry {
+                if let Some(p) = &det.path {
+                    match rewrite_base_url_file(Path::new(p), to_tunnel) {
+                        Ok(true) => count += 1,
+                        Ok(false) => {}
+                        Err(e) => log::warn!("改写 base_url 失败 {}: {e}", p),
+                    }
+                }
+            }
+        }
+    }
+    Ok(count)
+}
+
+fn rewrite_base_url_file(path: &Path, to_tunnel: bool) -> AppResult<bool> {
+    let raw = fs_atomic::read_string(path)?;
+    let (froms, to): (&[&str], &str) = if to_tunnel {
+        (
+            &[config::DEFAULT_BASE_URL, config::PROBE_BASE_URL],
+            config::TUNNEL_BASE_URL,
+        )
+    } else {
+        (&[config::TUNNEL_BASE_URL], config::PROBE_BASE_URL)
+    };
+    let mut out = raw.clone();
+    let mut changed = false;
+    for f in froms {
+        if out.contains(f) {
+            out = out.replace(f, to);
+            changed = true;
+        }
+    }
+    if changed {
+        fs_atomic::atomic_write(path, &out)?;
+    }
+    Ok(changed)
 }

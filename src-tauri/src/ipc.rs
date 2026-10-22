@@ -57,6 +57,10 @@ impl From<crate::error::AppError> for CommandError {
             crate::error::AppError::BackupFailed(_) => ("FILE_BACKUP_FAILED", "server", e.to_string()),
             crate::error::AppError::RollbackFailed(_) => ("ROLLBACK_FAILED", "server", e.to_string()),
             crate::error::AppError::RollbackBlocked => ("ROLLBACK_BLOCKED", "user", e.to_string()),
+            crate::error::AppError::Tunnel(_) => ("TUNNEL", "server", e.to_string()),
+            crate::error::AppError::HostKeyMissing => ("HOST_KEY_MISSING", "server", e.to_string()),
+            crate::error::AppError::HostKeyMismatch => ("HOST_KEY_MISMATCH", "server", e.to_string()),
+            crate::error::AppError::SshKeyMissing => ("SSH_KEY_MISSING", "user", e.to_string()),
             crate::error::AppError::Keyring(_) => ("KEYCHAIN_UNAVAILABLE", "server", e.to_string()),
             _ => ("INTERNAL", "server", e.to_string()),
         };

@@ -49,7 +49,8 @@ impl NewApiClient {
     }
 
     /// 密钥连通自测：用用户 key 调 /v1/chat/completions（ping），无 error 即连通。
-    pub async fn verify_key(&self, key: &str, model: &str) -> AppResult<bool> {
+    /// 失败时透传网关的真实错误（如「额度不足」「Invalid token」），不再吞成 bool 误导排查。
+    pub async fn verify_key(&self, key: &str, model: &str) -> AppResult<Result<(), String>> {
         let resp = self
             .http()
             .post(self.url("/v1/chat/completions"))
@@ -60,7 +61,13 @@ impl NewApiClient {
             .map_err(AppError::Network)?;
         let text = resp.text().await.map_err(|e| AppError::Other(e.to_string()))?;
         let v: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "error": "bad response" }));
-        Ok(v.get("error").is_none())
+        Ok(match v.get("error") {
+            None => Ok(()),
+            Some(e) => {
+                let msg = e.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");
+                Err(msg.to_string())
+            }
+        })
     }
 
     pub fn default_client() -> Self {

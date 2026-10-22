@@ -146,7 +146,7 @@ export default function ShopPage(_props: PageProps) {
                 <span className="pcard__pr">${prices[g.key] ?? g.price}</span>
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btn-grad"
                   style={{ marginLeft: 'auto' }}
                   disabled={busyKey === g.key}
                   onClick={(e) => { e.stopPropagation(); buy(g.key); }}

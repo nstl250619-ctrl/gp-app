@@ -26,6 +26,7 @@
     "allow-account-logout",
     "allow-account-status",
     "allow-account-setup-key",
+    "allow-account-setup-dsh-key",
     "allow-account-send-code",
     "allow-account-register",
     "allow-account-send-password-reset",
@@ -48,6 +49,12 @@
     "allow-shop-my-orders",
     "allow-shop-topup-create",
     "allow-shop-topup-status",
-    "allow-redeem-redeem"
+    "allow-redeem-redeem",
+    "allow-tunnel-status",
+    "allow-tunnel-start",
+    "allow-tunnel-stop",
+    "allow-tunnel-restart",
+    "allow-tunnel-probe",
+    "allow-tunnel-import-key"
   ]
 }

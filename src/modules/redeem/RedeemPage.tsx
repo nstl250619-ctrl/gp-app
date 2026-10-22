@@ -70,7 +70,7 @@ export default function RedeemPage(_props: PageProps) {
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !busy && code.trim()) submit(); }}
           />
-          <button type="button" className="btn btn-primary" disabled={busy || code.trim().length === 0} onClick={submit}>
+          <button type="button" className="btn btn-grad" disabled={busy || code.trim().length === 0} onClick={submit}>
             {t('redeem.submit')}
           </button>
         </div>

@@ -1,8 +1,8 @@
 // 一键配置页（§八 设计稿同款）：IDE 平台卡 + 定位 + 模型勾选 + 对照表 + 导入。用量已拆到 UsagePage。
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, Wand2, X } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, Wand2, X } from 'lucide-react';
 import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
-import type { ApplyResult, AvailableModels, DetectResult, InstallPlan } from '@/types/ipc';
+import type { ApplyResult, AvailableModels, DetectResult, InstallPlan, KeyItem } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
 import ModelPicker from './ModelPicker';
@@ -43,7 +43,6 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [detectAll, setDetectAll] = useState<DetectResult[]>([]);
   const [plan, setPlan] = useState<InstallPlan | null>(null);
   const [planState, setPlanState] = useState<'loading' | 'ready' | 'keyMissing' | 'error'>('loading');
-  const [planError, setPlanError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,8 +56,14 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const modelsDirty = useRef(false);
   const [baseUrl, setBaseUrl] = useState(() => loadBaseUrl());
   const baseUrlRef = useRef(loadBaseUrl());
+  // 密钥选择（account_list_keys/account_select_key）+ 显示开关
+  const [keys, setKeys] = useState<KeyItem[]>([]);
+  const [showKey, setShowKey] = useState(false);
 
   const isSingle = SINGLE_MODEL.has(tab);
+  // DSH 专属分组：DSH 卡锁定使用专属 key（不可切换），其他卡用通用 key。
+  const isDsh = tab === 'dsh';
+  const dshKey = keys.find((k) => k.name === 'DSH-Only');
 
   const loadPlan = useCallback((ids: string[]) => {
     if (ids.length === 0) {
@@ -67,7 +72,6 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       return;
     }
     setPlanState('loading');
-    setPlanError(null);
     const fetchPlan = () =>
       invokeCommand<InstallPlan>('install.plan', {
         target: tab, modelIds: ids, customPath: pathDraftRef.current || undefined, baseUrl: baseUrlRef.current,
@@ -90,12 +94,34 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           }
         }
         setPlan(null);
-        setPlanError(errorMessage(e));
         setPlanState('error');
       });
   }, [tab]);
 
+  // keys 列表刷新：跟随每次 load 拉取（会话失效/改分组后自动重试），不再只挂载拉一次
+  const refreshKeys = useCallback(async (): Promise<KeyItem[]> => {
+    try {
+      const ks = await invokeCommand<KeyItem[]>('account.list_keys', {});
+      setKeys(ks);
+      return ks;
+    } catch {
+      return [];
+    }
+  }, []);
+
   const load = useCallback(() => {
+    // DSH 卡兜底：key 列表缺 DSH-Only 时自动创建专属 key（幂等），成功后重算 plan 再刷新。
+    void refreshKeys().then((ks) => {
+      if (tab === 'dsh' && !ks.some((k) => k.name === 'DSH-Only')) {
+        invokeCommand('account.setupDshKey', {})
+          .then(() => {
+            // V3：专属 key 就绪后必须重算 plan，否则 plan 停留在用通用 key 算出的旧值。
+            loadPlan(selectedRef.current);
+            return refreshKeys();
+          })
+          .catch(() => setMsg(t('config.dshKeySetupFailed')));
+      }
+    });
     invokeCommand<DetectResult[]>('install.detect', {})
       .then((list) => {
         setDetectAll(list);
@@ -108,7 +134,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         }
       })
       .catch((e) => setMsg(errorMessage(e)));
-    invokeCommand<AvailableModels>('install.availableModels', {})
+    invokeCommand<AvailableModels>('install.availableModels', { target: tab })
       .then((res) => {
         const list = res.models;
         setModelsOffline(res.offline);
@@ -128,7 +154,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         if (isIpcError(e) && e.code === 'KEY_MISSING') {
           try {
             await invokeCommand('account.setupKey', {});
-            invokeCommand<AvailableModels>('install.availableModels', {})
+            invokeCommand<AvailableModels>('install.availableModels', { target: tab })
               .then((res) => {
                 const list = res.models;
                 setModelsOffline(res.offline);
@@ -147,7 +173,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           }
         }
       });
-  }, [tab, loadPlan]);
+  }, [tab, loadPlan, refreshKeys]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -214,17 +240,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     pathDirty.current = false;
     modelsDirty.current = false;
-    // restore this target's last saved selection immediately (load() will re-apply it once models arrive)
-    if (available.length > 0) {
-      const init = loadSavedModels(key, available);
-      saveModels(key, init);
-      selectedRef.current = init;
-      setSelected(init);
-      loadPlan(init);
-    } else {
-      // 列表未就绪：清空选择，避免沿用上个 target 的模型
-      selectedRef.current = []; setSelected([]); setPlan(null); setPlanState('ready');
-    }
+    // 切卡后清空选择，load()（依赖 tab 变化）会自动重拉该卡的模型列表并恢复已保存选择。
+    // DSH 卡拉 DSH-Only 分组模型，其他卡拉账号级模型（C4）。
+    selectedRef.current = [];
+    setSelected([]);
+    setPlan(null);
+    setPlanState('ready');
     setMsg(!WRITABLE.has(key) ? t('config.tabUnavailable') : null);
   };
 
@@ -235,10 +256,24 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     loadPlan(selectedRef.current);
   };
 
-  const rows = () => [
-    { field: t('config.rowService'), value: plan?.baseUrlAfter || '—' },
-    { field: t('config.rowKey'), value: plan ? `${plan.keyAfter}${t('config.keyPlain')}` : '—' },
-  ];
+  const maskKey = (k: string) => (k.length > 12 ? `${k.slice(0, 4)}••••••${k.slice(-4)}` : '••••••');
+
+  const copyKey = async () => {
+    if (!plan?.keyAfter) return;
+    await navigator.clipboard.writeText(plan.keyAfter);
+  };
+
+  const pickKey = async (tokenId: number) => {
+    try {
+      await invokeCommand('account.select_key', { tokenId });
+      const ks = await invokeCommand<KeyItem[]>('account.list_keys', {});
+      setKeys(ks);
+      setShowKey(false);
+      loadPlan(selectedRef.current); // 当前 key 已切换，重新计算 plan
+    } catch (e) {
+      setMsg(errorMessage(e));
+    }
+  };
 
   return (
     <div>
@@ -248,6 +283,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       <IdeTabs tab={tab} detectAll={detectAll} onPick={pickTab} />
 
       {WRITABLE.has(tab) && (
+        <>
+        {/* 定位配置文件：裸卡片，无标题 */}
         <div className="card">
           <div className="config-path-row">
             <span className={detect?.detected ? 'tag-pill' : 'tag-pill tag-pill--dim'}>
@@ -266,9 +303,13 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             </button>
           </div>
           <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.pathEditableHint')}</div>
+        </div>
 
-          <div className="config-path-row" style={{ marginTop: 'var(--space-4)' }}>
-            <span className="muted small" style={{ whiteSpace: 'nowrap' }}>{t('config.rowService')}</span>
+        {/* OpenAI 兼容模式配置：h2 标题 + 卡片 */}
+        <h2 className="section-title">{t('config.willChange')}</h2>
+        <div className="card">
+          <div className="config-path-row">
+            <span className="tag-pill" style={{ width: 76, justifyContent: 'center' }}>{t('config.rowService')}</span>
             <select className="input" style={{ flex: 1 }} value={baseUrl} onChange={(e) => changeUrl(e.target.value)}>
               <option value="https://api.greenpool.cn">https://api.greenpool.cn</option>
               <option value="https://aigw.greenpool.cn">https://aigw.greenpool.cn</option>
@@ -278,41 +319,68 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.aigwVpnTip')}</div>
           )}
 
+          <div className="config-path-row" style={{ marginTop: 'var(--space-3)' }}>
+            <span className="tag-pill" style={{ width: 76, justifyContent: 'center' }}>{t('config.rowKey')}</span>
+            <select
+              className="input"
+              style={{ flex: 1 }}
+              value={isDsh ? (dshKey?.tokenId ?? '') : (keys.find((k) => k.selected)?.tokenId ?? '')}
+              disabled={isDsh}
+              title={isDsh ? t('config.dshKeyLocked') : undefined}
+              onChange={(e) => { const id = Number(e.target.value); if (id) void pickKey(id); }}
+            >
+              {isDsh ? (
+                dshKey ? (
+                  <option value={dshKey.tokenId}>{showKey && plan ? plan.keyAfter : dshKey.name}</option>
+                ) : (
+                  <option value="">—</option>
+                )
+              ) : (
+                <>
+                  {keys.length === 0 && (
+                    <option value="">{plan ? (showKey ? plan.keyAfter : maskKey(plan.keyAfter)) : '—'}</option>
+                  )}
+                  {keys.map((k) => (
+                    <option key={k.tokenId} value={k.tokenId}>
+                      {k.selected && showKey && plan ? plan.keyAfter : k.name}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            <button type="button" className="icon-btn" title={showKey ? t('config.keyHide') : t('config.keyShow')} onClick={() => setShowKey((v) => !v)}>
+              {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+            <button type="button" className="icon-btn" title={t('common.copy')} onClick={() => void copyKey()}>
+              <Copy size={14} />
+            </button>
+          </div>
+        </div>
+
+        {/* 选择要导入的模型：h2 标题 + 卡片 */}
+        <h2 className="section-title">{t('config.selectModels')}</h2>
+        <div className="card">
           {modelsOffline && <div className="hint" style={{ marginBottom: 'var(--space-2)' }}>{t('configExtra.modelsOffline')}</div>}
 
           <ModelPicker
             available={available}
             selected={selected}
             single={isSingle}
+            showTitle={false}
             onToggle={toggleModel}
             onSelectAll={selectAllModels}
             onClear={clearModels}
           />
 
-          {plan ? (
-            <>
-              <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.willChange')}</div>
-              <table className="diff-table">
-                <tbody>
-                  {rows().map((r) => (
-                    <tr key={r.field}>
-                      <td className="diff-table__field">{r.field}</td>
-                      <td><span className="diff-table__value">{r.value}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          ) : planState === 'loading' ? (
+          {planState === 'loading' && (
             <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.planLoading')}</p>
-          ) : planState === 'keyMissing' ? (
+          )}
+          {planState === 'keyMissing' && (
             <p className="muted" style={{ marginTop: 'var(--space-3)' }}>{t('config.needKeyFirst')}</p>
-          ) : planState === 'error' ? (
-            <p className="muted" style={{ marginTop: 'var(--space-3)', color: 'var(--danger)' }}>{planError}</p>
-          ) : null}
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-            <button type="button" className="btn btn-primary" disabled={busy || !pathDraft.trim() || selected.length === 0} onClick={apply}>
+            <button type="button" className="btn btn-grad" disabled={busy || !pathDraft.trim() || selected.length === 0} onClick={apply}>
               <Wand2 size={15} />
               {t('config.importModels')} · {selected.length}
             </button>
@@ -331,6 +399,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           )}
           {msg && <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{msg}</div>}
         </div>
+        </>
       )}
     </div>
   );
