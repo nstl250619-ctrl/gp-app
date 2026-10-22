@@ -315,9 +315,6 @@ export default function ConfigPage({ onNavigate }: PageProps) {
               <option value="https://aigw.greenpool.cn">https://aigw.greenpool.cn</option>
             </select>
           </div>
-          {baseUrl.includes('aigw') && (
-            <div className="hint" style={{ marginTop: 'var(--space-2)' }}>{t('config.aigwVpnTip')}</div>
-          )}
 
           <div className="config-path-row" style={{ marginTop: 'var(--space-3)' }}>
             <span className="tag-pill" style={{ width: 76, justifyContent: 'center' }}>{t('config.rowKey')}</span>

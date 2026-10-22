@@ -3,6 +3,7 @@ dist
 src-tauri/target
 src-tauri/gen
 *.log
+build.err
 
 # 更新签名私钥（绝不能进仓库；CI 通过 TAURI_SIGNING_PRIVATE_KEY secret 注入）
 .tauri/update.key

@@ -154,6 +154,12 @@ export default function App() {
     };
   }, []);
 
+  // 存量升级用户补 DSH 专属 key 明文（幂等）：v0.3.0 前未写过钥匙串条目，
+  // 升级后不重新登录也要就绪；未登录时后端静默失败，登录流程会再补。
+  useEffect(() => {
+    invokeCommand('account.setupDshKey', {}).catch(() => {});
+  }, []);
+
   const refreshProbe = useCallback(() => {
     invokeCommand<InstanceCapability>('instance.probe', {}).then(setProbe).catch(() => {});
   }, []);

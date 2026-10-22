@@ -136,14 +136,22 @@ fn write_input(model_ids: Vec<String>, base_url: Option<String>, target: &str, d
 /// 返回 (models, offline)：offline=true 表示网关拉取失败、回退离线清单（可能过期，UI 需提示）。
 pub async fn available_models(target: &str) -> (Vec<String>, bool) {
     let fallback = || config::DEFAULT_MODEL_IDS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let group = if target == "dsh" { Some(config::DSH_GROUP) } else { None };
     match crate::services::account::ensure_session().await {
-        Ok(_) => match crate::services::shop::gateway_models(group).await {
-            Ok(models) if !models.is_empty() => (models, false),
-            // DSH 卡失败不回退通用清单：返回空列表 + offline，由 UI 提示，防专属隔离被通用模型击穿。
-            _ if target == "dsh" => (Vec::new(), true),
-            _ => (fallback(), true),
-        },
+        Ok(_) => {
+            // 模型列表跟随当前 key 的实际分组：DSH 卡固定专属分组；其他卡 key.group 非空用之，
+            // 空则用账号分组（与 new-api 鉴权一致）——月卡用户不再看到 DSH-Only 等无权限分组的模型。
+            let group = if target == "dsh" {
+                Some(config::DSH_GROUP.to_string())
+            } else {
+                crate::services::account::current_key_group().await
+            };
+            match crate::services::shop::gateway_models(group.as_deref()).await {
+                Ok(models) if !models.is_empty() => (models, false),
+                // DSH 卡失败不回退通用清单：返回空列表 + offline，由 UI 提示，防专属隔离被通用模型击穿。
+                _ if target == "dsh" => (Vec::new(), true),
+                _ => (fallback(), true),
+            }
+        }
         Err(_) if target == "dsh" => (Vec::new(), true),
         Err(_) => (fallback(), true),
     }

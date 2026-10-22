@@ -250,6 +250,19 @@ pub async fn list_keys() -> AppResult<Vec<KeyItem>> {
         .collect())
 }
 
+/// 当前选中 key 的实际分组（模型列表过滤用）：key.group 非空用之，空则回退账号分组
+/// （与 new-api 鉴权语义一致：空 group 的令牌按 user.group 路由）。拿不到时返回 None（列表退回账号级并集）。
+pub async fn current_key_group() -> Option<String> {
+    let token_id = stored_token_id()?;
+    let items = shop::gateway_list_keys().await.ok()?;
+    let g = items.iter().find(|t| t.id == token_id)?.group.clone();
+    if !g.is_empty() {
+        return Some(g);
+    }
+    let self_data = shop::gateway_self().await.ok()?;
+    Some(self_data.group)
+}
+
 /// 选择某个 key：取明文存钥匙串。走网关。
 pub async fn select_key(token_id: i64) -> AppResult<SetupKeyResult> {
     let _ = ensure_session().await?;
