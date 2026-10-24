@@ -149,13 +149,24 @@ pub async fn available_models(target: &str) -> (Vec<String>, bool) {
             };
             match crate::services::shop::gateway_models(group.as_deref()).await {
                 Ok(models) if !models.is_empty() => (models, false),
-                // DSH 卡失败不回退通用清单：返回空列表 + offline，由 UI 提示，防专属隔离被通用模型击穿。
-                _ if target == "dsh" => (Vec::new(), true),
-                _ => (fallback(), true),
+                Ok(empty) => {
+                    log::warn!(
+                        "模型列表返回空（target={target}, group={group:?}, count={}），回退离线清单",
+                        empty.len()
+                    );
+                    // DSH 卡失败不回退通用清单：返回空列表 + offline，由 UI 提示，防专属隔离被通用模型击穿。
+                    if target == "dsh" { (Vec::new(), true) } else { (fallback(), true) }
+                }
+                Err(e) => {
+                    log::warn!("模型列表拉取失败（target={target}, group={group:?}）：{e}，回退离线清单");
+                    if target == "dsh" { (Vec::new(), true) } else { (fallback(), true) }
+                }
             }
         }
-        Err(_) if target == "dsh" => (Vec::new(), true),
-        Err(_) => (fallback(), true),
+        Err(e) => {
+            log::warn!("网关会话建立失败（target={target}）：{e}，模型列表回退离线清单");
+            if target == "dsh" { (Vec::new(), true) } else { (fallback(), true) }
+        }
     }
 }
 
