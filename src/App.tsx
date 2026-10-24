@@ -197,6 +197,22 @@ export default function App() {
       .catch(() => setAuth(EMPTY_STATUS));
   }, []);
 
+  // 认证态刷新（H2）：窗口重新获得焦点时 + 每 60 秒。
+  // 购买/兑换 SVIP 订阅后 group 会变，不刷新的话直链加速按钮会一直保持禁用（提示「请升级 SVIP」）。
+  useEffect(() => {
+    const refreshAuth = () => {
+      invokeCommand<AppStatus>('app.status', {})
+        .then(setAuth)
+        .catch(() => {});
+    };
+    window.addEventListener('focus', refreshAuth);
+    const timer = window.setInterval(refreshAuth, 60_000);
+    return () => {
+      window.removeEventListener('focus', refreshAuth);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   useEffect(() => {
     // 版本号 + 自动更新检测（instance.probe 已由上方探测循环负责，不在此重复触发）
     import('@tauri-apps/api/app').then(({ getVersion }) =>

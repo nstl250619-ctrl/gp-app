@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -35,12 +35,25 @@ use crate::services::secrets::{self, Forward, Secrets};
 /// 注意：GPHub 旧版文档的 `SHA256:ALurh41A/...` 是客户端私钥指纹，禁用。
 const EXPECTED_HOST_KEY_FINGERPRINT: &str = "SHA256:Jv68QKIVzMh8Su8hiDMLhBE0tfC0C2EM5l3pYeWBeUc";
 
-const PROCESS_CHECK_INTERVAL: Duration = Duration::from_secs(8);
+const PROCESS_CHECK_INTERVAL: Duration = Duration::from_secs(3);
 const LISTEN_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// GUI 进程启动控制台子进程（netstat/ssh）的 Windows 标志：仅 CREATE_NO_WINDOW（不弹控制台窗口）。
+/// 错误对话框的抑制由**父进程** SetErrorMode 负责（见 lib.rs suppress_child_error_dialogs），
+/// 不能用 CREATE_DEFAULT_ERROR_MODE——那个 flag 语义是「子进程用系统默认错误模式（显示对话框）」，
+/// 与「抑制弹框」目标相反。
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CHILD_PROC_FLAGS: u32 = 0x0800_0000; // CREATE_NO_WINDOW
+
+/// netstat 连续失败计数与熔断标志：连续 3 次启动失败后，本轮隧道运行期内降级为纯 TCP 探测。
+static NETSTAT_FAILS: AtomicU32 = AtomicU32::new(0);
+static NETSTAT_DISABLED: AtomicBool = AtomicBool::new(false);
 const API_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 const API_TIMEOUT_SECS: u64 = 2;
 const LISTEN_TIMEOUT_MS: u64 = 350;
-const BACKOFF_START_S: u64 = 8;
+const BACKOFF_START_S: u64 = 1;
 const BACKOFF_CAP_S: u64 = 300;
 const RECONNECT_ERROR_THRESHOLD: u32 = 20;
 const GREEN_REQUIRED: u32 = 3;
@@ -81,6 +94,10 @@ pub struct HealthPoint {
     pub listen_ok: bool,
     pub api_state: ApiState,
     pub last_error: Option<String>,
+    /// 探活迟滞计数（内部用，不序列化）：连续 2 次失败才判定 listen 失效，
+    /// 防单次探活抖动（netstat 偶发失败/系统繁忙）导致状态跳「重连中」、甚至误重连。
+    #[serde(skip)]
+    pub listen_streak: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,6 +169,7 @@ impl Default for ManagerState {
                 listen_ok: false,
                 api_state: ApiState::Unchecked,
                 last_error: None,
+                listen_streak: 0,
             })
             .collect();
         Self {
@@ -241,6 +259,7 @@ pub fn status(data_dir: &Path) -> TunnelStatus {
                         listen_ok: false,
                         api_state: ApiState::Unchecked,
                         last_error: None,
+                        listen_streak: 0,
                     })
                     .collect(),
                 s.forwards,
@@ -330,6 +349,8 @@ fn ssh_keygen_command() -> Command {
 
 fn build_ssh_cmd(s: &Secrets, key_path: &Path, kh_path: &Path) -> Command {
     let mut cmd = ssh_command();
+    #[cfg(windows)]
+    cmd.creation_flags(CHILD_PROC_FLAGS);
     cmd.arg("-N")
         .arg("-o")
         .arg("IdentitiesOnly=yes")
@@ -340,9 +361,9 @@ fn build_ssh_cmd(s: &Secrets, key_path: &Path, kh_path: &Path) -> Command {
         .arg("-o")
         .arg("ExitOnForwardFailure=yes")
         .arg("-o")
-        .arg("ServerAliveInterval=10")
+        .arg("ServerAliveInterval=5")
         .arg("-o")
-        .arg("ServerAliveCountMax=3")
+        .arg("ServerAliveCountMax=2")
         .arg("-o")
         .arg("ConnectTimeout=8")
         .arg("-o")
@@ -393,9 +414,27 @@ fn port_listening(port: u16) -> bool {
 /// 用于 §5.5 端口归属判定：把本地端口归属与 ssh 子进程 pid 比对，避免误判/误杀其他进程。
 fn listening_ports() -> std::collections::HashMap<u16, u32> {
     let mut map = std::collections::HashMap::new();
-    let Ok(out) = Command::new("netstat").args(["-ano", "-p", "tcp"]).output() else {
+    // 熔断：netstat 连续失败后本轮运行期改用纯 TCP 探测（check_listen 的 degraded 分支），
+    // 避免探活高频重试 netstat 失败 → Windows 系统错误框无限弹出。
+    if NETSTAT_DISABLED.load(Ordering::Relaxed) {
         return map;
+    }
+    let mut cmd = Command::new("netstat");
+    cmd.args(["-ano", "-p", "tcp"]);
+    #[cfg(windows)]
+    cmd.creation_flags(CHILD_PROC_FLAGS);
+    let out = match cmd.output() {
+        Ok(o) if o.status.success() => o,
+        _ => {
+            let n = NETSTAT_FAILS.fetch_add(1, Ordering::Relaxed) + 1;
+            if n >= 3 {
+                NETSTAT_DISABLED.store(true, Ordering::Relaxed);
+                log::warn!("netstat 连续 {} 次失败，端口归属探测降级为纯 TCP 探测", n);
+            }
+            return map;
+        }
     };
+    NETSTAT_FAILS.store(0, Ordering::Relaxed);
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         if !line.to_uppercase().contains("LISTEN") {
@@ -417,6 +456,59 @@ fn listening_ports() -> std::collections::HashMap<u16, u32> {
         }
     }
     map
+}
+
+/// 判断 PID 是否为 ssh 进程（tasklist 过滤；非 Windows 恒 false，不误清理）。
+#[cfg(windows)]
+fn is_ssh_process(pid: u32) -> bool {
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .creation_flags(CHILD_PROC_FLAGS)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("ssh.exe"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_ssh_process(_pid: u32) -> bool {
+    false
+}
+
+/// P0 G2 修复：清理「占用隧道本地端口、但不是本进程 Child」的孤儿 ssh。
+///
+/// 上一实例被强杀/异常退出时，ssh.exe 会脱离父子链成为孤儿并继续占用本地转发端口：
+///   - watchdog 观察不到它（Child 不在本进程状态里）→ ssh 挂了没人重启；
+///   - stop 杀不掉它 → 端口 3000 仍被占 → 新 ssh 撞 `ExitOnForwardFailure=yes` 直接失败。
+///
+/// 只杀「端口 owner 是 ssh.exe」的进程（非 ssh 的占用留给端口冲突报错，不误杀）。
+/// 返回清理的进程数。
+fn kill_orphan_tunnel_ssh(ports: &[u16]) -> usize {
+    let current = { lock().as_ref().and_then(|s| s.child.as_ref().map(|c| c.id())) };
+    let owners = listening_ports();
+    let mut killed = 0usize;
+    for port in ports {
+        let Some(pid) = owners.get(port).copied() else { continue };
+        if Some(pid) == current {
+            continue; // 本进程自己的 child，不动
+        }
+        if !is_ssh_process(pid) {
+            continue; // 非 ssh 占用：交给端口冲突报错，不误杀
+        }
+        #[cfg(windows)]
+        let ok = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .creation_flags(CHILD_PROC_FLAGS)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        #[cfg(not(windows))]
+        let ok = false;
+        if ok {
+            killed += 1;
+            log::warn!("已清理孤儿隧道 ssh（pid={pid}，端口 {port}）");
+        }
+    }
+    killed
 }
 
 /// ssh stderr 落盘 + 5MB 轮转（§5.8：日志不无限增长）。emit 到前端另由调用方处理。
@@ -443,17 +535,37 @@ pub fn start(app: &AppHandle, data_dir: &Path) -> AppResult<()> {
     if !config::TURBO_ENABLED {
         return Err(AppError::Tunnel("直链加速功能尚未启用".into()));
     }
+    // 重置 netstat 熔断状态（每次启动隧道重新给予归属探测机会）。
+    NETSTAT_FAILS.store(0, Ordering::Relaxed);
+    NETSTAT_DISABLED.store(false, Ordering::Relaxed);
     // 端口冲突前置检测（锁外，阻塞操作不持锁）；配置加载失败直接报错，不静默回退
     let s = secrets::load(data_dir)?;
-    let conflicts: Vec<u16> = s
-        .forwards
-        .iter()
-        .filter(|f| f.enabled)
-        .map(|f| f.local_port)
-        .filter(|p| port_listening(*p))
-        .collect();
+    let ports: Vec<u16> = s.forwards.iter().filter(|f| f.enabled).map(|f| f.local_port).collect();
+    // P0 G2 修复：先清理上一实例遗留的孤儿 ssh（强杀/崩溃时 ssh 脱离父子链占端口），
+    // 否则下面的端口冲突检测会直接拒绝启动，且 stop 也杀不掉它。
+    if kill_orphan_tunnel_ssh(&ports) > 0 {
+        std::thread::sleep(Duration::from_millis(300)); // 等 socket 释放
+    }
+    let conflicts: Vec<u16> = ports.iter().copied().filter(|p| port_listening(*p)).collect();
     if !conflicts.is_empty() {
         return Err(AppError::Tunnel(format!("端口冲突：{:?} 已被占用", conflicts)));
+    }
+
+    // P0 G2 修复：覆盖运行时状态前，先强制终止本进程残留的旧 child
+    // （Rust 的 Child Drop 不会 kill 进程，旧 ssh 会泄漏成孤儿）。
+    {
+        let (stale_child, stale_tmp) = {
+            let mut st = lock();
+            match st.as_mut() {
+                Some(state) => (state.child.take(), state.tmp_dir.take()),
+                None => (None, None),
+            }
+        };
+        if let Some(mut c) = stale_child {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        drop(stale_tmp); // 一并清理旧临时私钥目录
     }
 
     // 原子认领启动权 + 递增 generation（P0-2：用户主动重试必须让旧轮次/旧后台任务失效）
@@ -510,6 +622,7 @@ pub fn stop(app: &AppHandle) -> AppResult<()> {
             h.listen_ok = false;
             h.api_state = ApiState::Unchecked;
             h.last_error = None;
+            h.listen_streak = 0;
         }
         (state.child.take(), state.tmp_dir.take())
     };
@@ -537,6 +650,16 @@ pub fn stop(app: &AppHandle) -> AppResult<()> {
         drop(tmp); // TempDir drop → 删除目录
         if path.exists() {
             log::warn!("临时私钥目录删除失败（残留）：{}", path.display());
+        }
+    }
+
+    // P0 G2 兜底：child 不在（孤儿遗留）时，清理端口上残留的 ssh.exe，
+    // 防「stop 杀不掉、端口仍被占、下次 start 直接失败」。
+    {
+        let data_dir = app.state::<crate::state::AppState>().data_dir.clone();
+        if let Ok(s) = secrets::load(&data_dir) {
+            let ports: Vec<u16> = s.forwards.iter().filter(|f| f.enabled).map(|f| f.local_port).collect();
+            let _ = kill_orphan_tunnel_ssh(&ports);
         }
     }
 
@@ -682,21 +805,45 @@ fn check_listen(gen: u64, app: &AppHandle, data_dir: &Path) {
         if state.generation != gen {
             return;
         }
+        // netstat 熔断后降级：纯 TCP 探测（不校验归属 PID，netstat 不可用时的合理折中）。
+        let degraded = NETSTAT_DISABLED.load(Ordering::Relaxed);
         for f in s.forwards.iter().filter(|f| f.enabled) {
-            // 归属判定（§5.5）：本地端口 owning PID 必须等于本隧道 ssh pid，才视为本隧道转发可用。
-            let owner = owners.get(&f.local_port).copied();
-            let ok = ssh_pid.is_some() && owner == ssh_pid;
-            // 端口被「非本隧道 ssh」的进程占用 → 冲突（禁止重建，不误杀）
-            if owner.is_some() && owner != ssh_pid {
-                any_conflict = true;
-            }
+            let ok = if degraded {
+                port_listening(f.local_port)
+            } else {
+                // 归属判定（§5.5）：本地端口 owning PID 等于本隧道 ssh pid → 转发可用。
+                // netstat 偶发无数据（空/解析失败）时用 TCP 探测兜底，避免误判掉线触发重连。
+                match owners.get(&f.local_port).copied() {
+                    Some(pid) => {
+                        let mine = ssh_pid == Some(pid);
+                        // 端口被「非本隧道 ssh」的进程占用 → 冲突（禁止重建，不误杀）
+                        if !mine {
+                            any_conflict = true;
+                        }
+                        mine
+                    }
+                    None => port_listening(f.local_port),
+                }
+            };
             if !ok {
                 all_listen = false;
             }
             if let Some(h) = state.health.iter_mut().find(|h| h.endpoint == f.id) {
-                if h.listen_ok != ok {
-                    h.listen_ok = ok;
-                    changed = true;
+                if !ok && h.listen_ok {
+                    // 掉线迟滞：连续 2 次失败才判定失效（防单次探活抖动导致状态跳/误重连）。
+                    h.listen_streak += 1;
+                    if h.listen_streak >= 2 {
+                        h.listen_ok = false;
+                        h.listen_streak = 0;
+                        changed = true;
+                    }
+                } else {
+                    // 恢复立即生效（端口一就绪就亮绿），并清零迟滞计数。
+                    if ok && !h.listen_ok {
+                        h.listen_ok = true;
+                        changed = true;
+                    }
+                    h.listen_streak = 0;
                 }
             }
         }
@@ -782,9 +929,20 @@ fn synthesize_phase(ssh_alive: bool, all_listen: bool, any_api_fail: bool) -> Tu
     }
 }
 
-/// 退避翻倍（封顶 300s）。
+/// 退避翻倍（封顶 300s）+ 随机抖动（±25%）。
+/// 抖动用于打散「服务器重启 / 网络恢复后所有客户端同一秒重连」的同步风暴
+/// （批量分发场景下 30 个客户端同时建连会撞 MaxStartups）。
 fn next_backoff(s: u64) -> u64 {
-    (s * 2).min(BACKOFF_CAP_S)
+    let raw = (s * 2).min(BACKOFF_CAP_S);
+    let jitter_max = (raw / 4).max(1);
+    // 无 rand 依赖：用时钟纳秒取模作为伪随机抖动。
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0)
+        % jitter_max;
+    // 抖动后仍封顶（抖动不应突破 BACKOFF_CAP_S）
+    (raw + jitter).min(BACKOFF_CAP_S)
 }
 
 /// 致命隧道错误：安全/配置类错误，重试不会自愈，必须显式报错并暂停自动重试（P0-3）。
@@ -1147,13 +1305,17 @@ mod tests {
     }
 
     #[test]
-    fn backoff_caps_at_300() {
-        let mut s = 8u64;
-        let seq: Vec<u64> = (0..7).map(|_| {
-            s = next_backoff(s);
-            s
-        })
-        .collect();
-        assert_eq!(seq, vec![16, 32, 64, 128, 256, 300, 300]);
+    fn backoff_grows_with_jitter_and_caps() {
+        // 每档独立验证（抖动会累积，不能假设精确序列）：
+        // 下一档 = min(2s, CAP) + 0~25% 抖动，且最终封顶 CAP。
+        for s in [8u64, 16, 32, 64, 128, 256, 300, 400] {
+            let v = next_backoff(s);
+            let raw = (s * 2).min(BACKOFF_CAP_S);
+            assert!(v >= raw, "退避不得低于翻倍基准（got {v}, raw {raw}, s {s}）");
+            assert!(v <= BACKOFF_CAP_S, "退避必须封顶 {BACKOFF_CAP_S}（got {v}）");
+            if raw < BACKOFF_CAP_S {
+                assert!(v <= raw + raw / 4, "抖动上限 25%（got {v}, raw {raw}, s {s}）");
+            }
+        }
     }
 }

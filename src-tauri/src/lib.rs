@@ -15,7 +15,30 @@ pub mod tray;
 
 use tauri::Manager;
 
+// 抑制子进程（netstat/ssh/taskkill）启动失败时的 Windows 系统错误对话框（如 0xc0000142）。
+// 正确机制是【父进程】设置错误模式（子进程默认继承）；
+// 子进程用 CREATE_DEFAULT_ERROR_MODE 反而是反的——那个 flag 会恢复「显示错误对话框」的默认行为。
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn SetErrorMode(u_mode: u32) -> u32;
+}
+
+#[cfg(windows)]
+fn suppress_child_error_dialogs() {
+    const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+    // SAFETY: SetErrorMode 仅设置当前进程的错误模式，无内存安全问题。
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    }
+}
+
+#[cfg(not(windows))]
+fn suppress_child_error_dialogs() {}
+
 pub fn run() {
+    suppress_child_error_dialogs();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window(config::MAIN_WINDOW_LABEL) {

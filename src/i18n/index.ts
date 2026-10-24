@@ -343,7 +343,7 @@ export const zh = {
     feature2: '并非模型速度提高',
     feature3: '需要GP工具常驻后台',
     feature4: '可关闭界面退至托盘',
-    feature5: '月卡会员专属',
+    feature5: 'SVIP会员专属',
     start: '启动',
     stop: '停止',
     connecting: '连接中',

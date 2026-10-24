@@ -66,6 +66,8 @@ pub async fn login(identifier: String, password: String) -> AppResult<AccountSta
         let _ = credential::delete(config::CREDENTIAL_ACCOUNT_API_KEY);
         let _ = credential::delete(config::CREDENTIAL_ACCOUNT_KEY_TOKEN_ID);
         let _ = credential::delete(config::CREDENTIAL_DSH_API_KEY);
+        // 换号：清分组缓存，防上一个账号的 svip 身份串到新账号
+        crate::commands::app::reset_group_cache();
     }
     // 网关登录已存 SHOP_AUTH_TOKEN / SHOP_USER_ID；补齐账号信息 + 密码供静默重登。
     credential::set(config::CREDENTIAL_ACCOUNT_USERNAME, &user.username)?;
@@ -142,6 +144,8 @@ pub fn logout() -> AppResult<()> {
     ] {
         let _ = credential::delete(k);
     }
+    // 登出：清分组缓存（防跨账号串味）
+    crate::commands::app::reset_group_cache();
     let _ = shop::logout();
     Ok(())
 }

@@ -5,6 +5,17 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::ipc::{CommandResult, SimpleAck};
 
+/// 账号分组缓存（H3）：gateway_self 失败时沿用上次成功值，
+/// 避免网络抖动/会话重登把 SVIP 用户误判为非会员（直链加速按钮被错误禁用）。
+static GROUP_CACHE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 清除分组缓存（登出/换号时调用，防跨账号串味）。
+pub fn reset_group_cache() {
+    if let Ok(mut c) = GROUP_CACHE.lock() {
+        *c = None;
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
@@ -43,10 +54,20 @@ pub async fn app_status() -> CommandResult<AppStatus> {
     let target_detected = crate::adapters::all_adapters()
         .iter()
         .any(|a| a.detect(None).map(|d| d.detected).unwrap_or(false));
-    // 账号分组：仅登录时从 /api/user/self 获取；失败不阻断状态聚合（group=None，前端按非会员处理）
+    // 账号分组：登录时从 /api/user/self 获取并缓存；失败沿用上次成功值（H3：
+    // 不让网络抖动把 SVIP 误判为非会员）。未登录清空缓存。
     let group = if account.logged_in {
-        crate::services::shop::gateway_self().await.ok().map(|s| s.group)
+        match crate::services::shop::gateway_self().await {
+            Ok(s) => {
+                if let Ok(mut c) = GROUP_CACHE.lock() {
+                    *c = Some(s.group.clone());
+                }
+                Some(s.group)
+            }
+            Err(_) => GROUP_CACHE.lock().ok().and_then(|c| c.clone()),
+        }
     } else {
+        reset_group_cache();
         None
     };
 

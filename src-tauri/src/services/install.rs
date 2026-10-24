@@ -260,6 +260,26 @@ fn apply_locked(
 /// 导入前预检：逐个验证模型在当前 key + base_url 下是否可用，拆「可用 / 不可用（含原因）」。
 /// key 缺失、base_url 解析失败、单模型网络错误 → 视为「不确定」，保留模型（不误摘）。
 /// 仅业务明确返回「模型不可用」时摘除（弱化提示，不阻断整体成功判定）。
+/// 判断是否为「全局性」失败（额度/密钥/限流）：这类问题不是某个模型的错，
+/// 不应逐模型摘除（否则额度为 0 时会把整批模型都摘掉，用户误以为模型配置坏了）。
+fn is_global_verify_failure(reason: &str) -> bool {
+    let l = reason.to_lowercase();
+    l.contains("quota")
+        || l.contains("insufficient")
+        || l.contains("invalid token")
+        || l.contains("rate limit")
+        || l.contains("too many requests")
+}
+
+/// 预检结果缓存（M4）：同 key + base_url + 模型集，5 分钟内复用，避免重复导入全量重验。
+static PRECHECK_CACHE: std::sync::Mutex<Option<(std::time::Instant, String, Vec<String>, Vec<(String, String)>)>> =
+    std::sync::Mutex::new(None);
+
+/// 导入前预检：逐个验证模型在当前 key + base_url 下是否可用，拆「可用 / 不可用（含原因）」。
+/// - 并发分批（每批 4 个）：13 个模型从 ~40s 压到 ~10s 内（M2）。
+/// - 同 key+url+模型集 5 分钟内复用结果（M4）。
+/// - key 缺失、base_url 解析失败、网络错误 → 视为「不确定」，保留模型（不误摘）。
+/// - 额度/密钥/限流等全局性失败 → 整批保留 + 提示（不把整批模型都摘掉）。
 async fn precheck_models(
     target: &str,
     model_ids: &[String],
@@ -274,15 +294,56 @@ async fn precheck_models(
         Ok(u) => u,
         Err(_) => return (model_ids.to_vec(), Vec::new()),
     };
-    let client = crate::newapi::NewApiClient::new(&url);
-    let mut ok = Vec::new();
-    let mut failed = Vec::new();
-    for model in model_ids.iter() {
-        match client.verify_key(&key, model).await {
-            Ok(Ok(())) => ok.push(model.clone()),
-            Ok(Err(reason)) => failed.push((model.clone(), reason)),
-            Err(_) => ok.push(model.clone()), // 网络错误：不确定不可用，保留
+    // M4：缓存命中直接复用（换号后 key 变化 → cache_key 不匹配 → 自动重验）
+    let cache_key = format!("{}|{}|{}", key, url, model_ids.join(","));
+    if let Ok(c) = PRECHECK_CACHE.lock() {
+        if let Some((at, k, ok, failed)) = c.as_ref() {
+            if k == &cache_key && at.elapsed() < std::time::Duration::from_secs(300) {
+                return (ok.clone(), failed.clone());
+            }
         }
+    }
+    let client = crate::newapi::NewApiClient::new(&url);
+    let mut ok: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    let mut global_fail: Option<(String, String)> = None;
+    // M2：分批并发（每批 4 个）控制服务器压力
+    for chunk in model_ids.chunks(4) {
+        let mut set = tokio::task::JoinSet::new();
+        for m in chunk {
+            let client = client.clone();
+            let key = key.clone();
+            let m = m.clone();
+            set.spawn(async move {
+                let r = client.verify_key(&key, &m).await;
+                (m, r)
+            });
+        }
+        while let Some(joined) = set.join_next().await {
+            let Ok((m, r)) = joined else { continue };
+            match r {
+                Ok(Ok(())) => ok.push(m),
+                Ok(Err(reason)) => {
+                    if is_global_verify_failure(&reason) {
+                        global_fail = Some((m, reason)); // 全局性失败：最后整批保留
+                    } else {
+                        failed.push((m, reason));
+                    }
+                }
+                Err(_) => ok.push(m), // 网络错误：不确定不可用，保留
+            }
+        }
+    }
+    // H1：全局性失败（额度/密钥/限流）→ 整批保留（配置本身没问题），只带一条提示，且不缓存。
+    if let Some(g) = global_fail {
+        return (model_ids.to_vec(), vec![g]);
+    }
+    // 保持用户勾选顺序（并发完成顺序不定）
+    let mut ok_set: std::collections::HashSet<String> = ok.into_iter().collect();
+    let ok: Vec<String> = model_ids.iter().filter(|m| ok_set.remove(*m)).cloned().collect();
+    failed.sort_by(|a, b| a.0.cmp(&b.0));
+    if let Ok(mut c) = PRECHECK_CACHE.lock() {
+        *c = Some((std::time::Instant::now(), cache_key, ok.clone(), failed.clone()));
     }
     (ok, failed)
 }
