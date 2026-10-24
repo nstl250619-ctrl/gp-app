@@ -73,14 +73,11 @@ pub struct Secrets {
 impl Default for Secrets {
     fn default() -> Self {
         Self {
-            // 直链加速未启用（产品决策）：SSH 目标与凭据全部占位，防真实服务器信息进发布包。
-            // 启用时填回：ssh_host / ssh_user / host_key_b64（真实值见运维记录），并恢复指纹自证测试。
-            ssh_host: "".into(),
+            ssh_host: "156.225.28.144".into(),
             ssh_port: 2222,
-            ssh_user: "".into(),
+            ssh_user: "gp-tunnel".into(),
             host_key_type: "ssh-ed25519".into(),
-            // 占位：host key 留空 = 隧道拒绝启动（失败关闭，HostKeyMissing）。
-            host_key_b64: "".into(),
+            host_key_b64: "AAAAC3NzaC1lZDI1NTE5AAAAIKcLEs6ZU21owpf2KJHxaxzTGYN0Gz8e+/JB9qqqpBHQ".into(),
             // 端点转发表（唯一正确映射，与 GPHub 一致）：
             //   newapi=3000→13000、agent2api=3065→13065、wb2manager=7864→17864
             // 范围收敛（用户决策）：当前只开放 newapi 一个转发；agent2api/wb2manager 暂不开放，

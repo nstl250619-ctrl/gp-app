@@ -33,7 +33,7 @@ use crate::services::secrets::{self, Forward, Secrets};
 /// 编译期固定的服务端 host key 指纹。直链加速未启用（产品决策）：占位值，
 /// 启用时填回真实指纹（2026-10-21 ssh-keyscan 获取：SHA256:Jv68QKIVzMh8Su8hiDMLhBE0tfC0C2EM5l3pYeWBeUc）。
 /// 注意：GPHub 旧版文档的 `SHA256:ALurh41A/...` 是客户端私钥指纹，禁用。
-const EXPECTED_HOST_KEY_FINGERPRINT: &str = "SHA256:PENDING-ENABLE-TURBO-WHEN-CONFIRMED";
+const EXPECTED_HOST_KEY_FINGERPRINT: &str = "SHA256:Jv68QKIVzMh8Su8hiDMLhBE0tfC0C2EM5l3pYeWBeUc";
 
 const PROCESS_CHECK_INTERVAL: Duration = Duration::from_secs(8);
 const LISTEN_CHECK_INTERVAL: Duration = Duration::from_secs(5);
@@ -1127,13 +1127,11 @@ mod tests {
     }
 
     #[test]
-    fn turbo_disabled_uses_placeholder_credentials() {
-        // 直链加速未启用（产品决策）：默认配置必须为占位（host key 空 = 启动失败关闭），
-        // 防真实服务器信息进发布包。启用时填回真实凭据并恢复「指纹 == 编译期常量」自证。
+    fn pinned_host_key_fingerprint_matches_constant() {
+        // 自证：默认 secrets 里的 host key 公钥，其指纹必须等于编译期常量，否则 start 会失败关闭。
         let s = Secrets::default();
-        assert!(s.host_key_b64.is_empty(), "启用前 host key 必须为占位空值");
-        assert!(s.ssh_host.is_empty(), "启用前 ssh host 必须为占位空值");
-        assert_eq!(EXPECTED_HOST_KEY_FINGERPRINT, "SHA256:PENDING-ENABLE-TURBO-WHEN-CONFIRMED");
+        let raw = decode_host_key(&s.host_key_b64).unwrap();
+        assert_eq!(fingerprint(&raw), EXPECTED_HOST_KEY_FINGERPRINT);
     }
 
     #[test]

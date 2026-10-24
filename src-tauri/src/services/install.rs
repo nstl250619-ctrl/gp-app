@@ -121,6 +121,8 @@ fn friendly_verify_error(raw: &str) -> String {
         "该模型暂无可用渠道".into()
     } else if lowered.contains("channel disabled") {
         "该渠道已停用".into()
+    } else if lowered.contains("不可用") {
+        "该模型当前不可用".into()
     } else {
         core.to_string()
     }
@@ -255,7 +257,38 @@ fn apply_locked(
     Ok(result)
 }
 
-/// 写入 + 可选连接自测（§7.2 verify 语义：连接失败不回滚、不报失败，只标注 connectivity_failed）。
+/// 导入前预检：逐个验证模型在当前 key + base_url 下是否可用，拆「可用 / 不可用（含原因）」。
+/// key 缺失、base_url 解析失败、单模型网络错误 → 视为「不确定」，保留模型（不误摘）。
+/// 仅业务明确返回「模型不可用」时摘除（弱化提示，不阻断整体成功判定）。
+async fn precheck_models(
+    target: &str,
+    model_ids: &[String],
+    base_url: &Option<String>,
+    data_dir: &PathBuf,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let key = match api_key_for(target) {
+        Ok(k) => k,
+        Err(_) => return (model_ids.to_vec(), Vec::new()),
+    };
+    let url = match normalize_base_url(base_url.clone(), target, data_dir) {
+        Ok(u) => u,
+        Err(_) => return (model_ids.to_vec(), Vec::new()),
+    };
+    let client = crate::newapi::NewApiClient::new(&url);
+    let mut ok = Vec::new();
+    let mut failed = Vec::new();
+    for model in model_ids.iter() {
+        match client.verify_key(&key, model).await {
+            Ok(Ok(())) => ok.push(model.clone()),
+            Ok(Err(reason)) => failed.push((model.clone(), reason)),
+            Err(_) => ok.push(model.clone()), // 网络错误：不确定不可用，保留
+        }
+    }
+    (ok, failed)
+}
+
+/// 预检 + 写入（产品决策：预检与载入分开）：
+/// 先逐个预检，摘除不可用模型，只把可用模型写入配置；摘除项弱化提示，不阻断成功。
 /// 锁只在同步写入段持有，绝不跨 await（async 命令要求 Future: Send）。
 pub async fn apply_with_verify(
     target: String,
@@ -265,34 +298,46 @@ pub async fn apply_with_verify(
     base_url: Option<String>,
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
-    let mut result = {
-        let _guard = lock()?;
-        apply_locked(target.clone(), model_ids.clone(), custom_path, base_url.clone(), data_dir)?
+    let (ok_ids, failed) = if verify && !model_ids.is_empty() {
+        precheck_models(&target, &model_ids, &base_url, data_dir).await
+    } else {
+        (model_ids.clone(), Vec::new())
     };
 
-    if verify && result.verify_ok {
-        // 抽样验证最多 3 个模型：只验第一个会漏掉「部分模型在本分组无渠道」的情况
-        let models: Vec<String> = resolve_ids(model_ids).into_iter().take(3).collect();
-        if let Ok(key) = api_key_for(&target) {
-            // 连通自测与实际写入保持一致（Node 系客户端会被 normalize 强制到 aigw；隧道中走本地转发）
-            let client = crate::newapi::NewApiClient::new(&normalize_base_url(base_url, &target, data_dir)?);
-            for model in models {
-                match client.verify_key(&key, &model).await {
-                    Ok(Ok(())) => continue,
-                    Ok(Err(reason)) => {
-                        result.status = "connectivity_failed".into();
-                        result.message = format!("已写入，但模型 {} 连接未通过：{}", model, friendly_verify_error(&reason));
-                        break;
-                    }
-                    Err(_) => {
-                        result.status = "connectivity_failed".into();
-                        result.message = "已写入，但无法完成连接自测（可能离线）".into();
-                        break;
-                    }
-                }
-            }
-        }
+    if ok_ids.is_empty() {
+        let reason = failed
+            .first()
+            .map(|(_, r)| friendly_verify_error(r))
+            .unwrap_or_else(|| "未知原因".into());
+        return Ok(ApplyResult {
+            status: "failed".into(),
+            path: String::new(),
+            backup_path: None,
+            verify_ok: true,
+            requires_restart: false,
+            message: format!("所选模型均暂不可用，未导入：{}", reason),
+            extra_backups: Vec::new(),
+        });
     }
+
+    let mut result = {
+        let _guard = lock()?;
+        apply_locked(target.clone(), ok_ids.clone(), custom_path, base_url.clone(), data_dir)?
+    };
+
+    if failed.is_empty() {
+        result.message = format!("导入 {} 个模型成功", ok_ids.len());
+    } else {
+        let names: Vec<String> = failed.iter().map(|(n, _)| n.clone()).collect();
+        let reason = friendly_verify_error(&failed[0].1);
+        result.message = format!(
+            "模型 {} 暂不可用（{}），导入 {} 个模型成功",
+            names.join("、"),
+            reason,
+            ok_ids.len()
+        );
+    }
+
     Ok(result)
 }
 

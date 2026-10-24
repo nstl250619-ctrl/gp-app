@@ -62,7 +62,7 @@ pub const TUNNEL_EVENT_LOG: &str = "tunnel://log";
 pub const TUNNEL_BASE_URL: &str = "http://127.0.0.1:3000";
 /// 直链加速总开关（产品决策）：false = 功能未启用（前端按钮禁用 + 后端 start 拒绝 + SSH 凭据占位）。
 /// 上线时改 true 并恢复 secrets.rs / tunnel.rs / secrets.enc 的真实凭据。
-pub const TURBO_ENABLED: bool = false;
+pub const TURBO_ENABLED: bool = true;
 
 // ---- WorkBuddy 配置写入常量（§11.6 原文） ----
 pub const MANAGED_MODEL_NAME: &str = "GP";

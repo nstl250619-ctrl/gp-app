@@ -53,7 +53,7 @@ const EMPTY_STATUS: AppStatus = {
 
 /// 直链加速总开关（产品决策）：false = 功能暂不启用（启动/停止禁用、SSH 凭据为占位），
 /// 确认上线时改 true 并恢复 secrets.rs / tunnel.rs / secrets.enc 的真实凭据。
-const TURBO_ENABLED = false;
+const TURBO_ENABLED = true;
 
 /// 直链加速卡片（会员功能公告卡）：无独立页面，侧栏公告式卡片。
 /// 状态映射：stopped→启动(可点) / connecting→连接中 / reconnecting→重试中 /

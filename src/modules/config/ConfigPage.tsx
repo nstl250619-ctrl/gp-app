@@ -191,7 +191,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         target: tab, modelIds: selectedRef.current, verify: true, customPath: pathDraftRef.current || undefined, baseUrl: baseUrlRef.current,
       });
       const ok = r.status === 'applied';
-      setResult({ ok, text: ok ? t('config.applySuccess') : r.message });
+      setResult({ ok, text: ok ? (r.message || t('config.applySuccess')) : r.message });
       pathDirty.current = false;
       modelsDirty.current = false;
       load();
