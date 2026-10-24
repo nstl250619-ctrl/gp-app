@@ -17,6 +17,9 @@ pub struct AppStatus {
     pub masked_api_key: Option<String>,
     pub target_detected: bool,
     pub shop_ready: bool,
+    /// 账号分组（new-api user.group，如 svip/月卡组-1）：直链加速会员判定用。未登录或获取失败为 None。
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// 外链域名白名单（修 H4）：只允许 https + greenpool.cn 及其子域，其余一律拒绝。
@@ -40,6 +43,12 @@ pub async fn app_status() -> CommandResult<AppStatus> {
     let target_detected = crate::adapters::all_adapters()
         .iter()
         .any(|a| a.detect(None).map(|d| d.detected).unwrap_or(false));
+    // 账号分组：仅登录时从 /api/user/self 获取；失败不阻断状态聚合（group=None，前端按非会员处理）
+    let group = if account.logged_in {
+        crate::services::shop::gateway_self().await.ok().map(|s| s.group)
+    } else {
+        None
+    };
 
     CommandResult::ok(AppStatus {
         name: crate::config::APP_NAME.into(),
@@ -51,6 +60,7 @@ pub async fn app_status() -> CommandResult<AppStatus> {
         masked_api_key: account.masked_api_key,
         target_detected,
         shop_ready: shop.ready,
+        group,
     })
 }
 

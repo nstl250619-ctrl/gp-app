@@ -51,6 +51,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pathDirty = useRef(false);
   const [available, setAvailable] = useState<string[]>([]);
   const [modelsOffline, setModelsOffline] = useState(false);
+  // 冷启动时序防抖：会话静默重登期间首次拉取可能失败，仅自动重试一次
+  const modelsRetryRef = useRef(false);
   const [selected, setSelected] = useState<string[]>([]);
   const selectedRef = useRef<string[]>([]);
   const modelsDirty = useRef(false);
@@ -171,6 +173,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           } catch {
             setPlanState('keyMissing'); // surface instead of silent swallow
           }
+        } else if (!modelsRetryRef.current) {
+          // 冷启动时序：会话静默重登期间首次拉取可能失败（「网关未连通」+ 误导的重新登录提示），
+          // 延迟重试一次；仍失败则停留当前态，由用户切卡/操作触发再拉。
+          modelsRetryRef.current = true;
+          setMsg(null);
+          setTimeout(() => load(), 3000);
         }
       });
   }, [tab, loadPlan, refreshKeys]);

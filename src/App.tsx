@@ -58,9 +58,12 @@ const TURBO_ENABLED = true;
 /// 直链加速卡片（会员功能公告卡）：无独立页面，侧栏公告式卡片。
 /// 状态映射：stopped→启动(可点) / connecting→连接中 / reconnecting→重试中 /
 /// connected|degraded→运行中 / error→重试(可点，start 在 error 态语义为取消旧轮次重启)。
-function TurboCard({ tunnel }: { tunnel: TunnelStatus | null }) {
+function TurboCard({ tunnel, group }: { tunnel: TunnelStatus | null; group: string | null }) {
   const phase = tunnel?.phase ?? 'stopped';
-  const canStart = TURBO_ENABLED && (phase === 'stopped' || phase === 'error');
+  // 会员判定（产品决策）：仅 svip 分组可启动；分组未知按非会员处理
+  const isSvip = group === 'svip';
+  const hint = !TURBO_ENABLED ? t('turbo.comingSoon') : !isSvip ? t('turbo.svipOnly') : undefined;
+  const canStart = TURBO_ENABLED && isSvip && (phase === 'stopped' || phase === 'error');
   const startLabel =
     phase === 'connected' || phase === 'degraded'
       ? t('turbo.running')
@@ -102,7 +105,7 @@ function TurboCard({ tunnel }: { tunnel: TunnelStatus | null }) {
           type="button"
           className="turbo-btn turbo-btn--primary"
           disabled={!canStart}
-          title={TURBO_ENABLED ? undefined : t('turbo.comingSoon')}
+          title={hint}
           onClick={() => invokeCommand('tunnel.start', {}).catch(() => {})}
         >
           {startLabel}
@@ -111,7 +114,7 @@ function TurboCard({ tunnel }: { tunnel: TunnelStatus | null }) {
           type="button"
           className="turbo-btn"
           disabled={!TURBO_ENABLED || phase === 'stopped'}
-          title={TURBO_ENABLED ? undefined : t('turbo.comingSoon')}
+          title={hint}
           onClick={() => invokeCommand('tunnel.stop', {}).catch(() => {})}
         >
           {t('turbo.stop')}
@@ -277,7 +280,7 @@ export default function App() {
         >
           QQ:237525313
         </button>
-        <TurboCard tunnel={tunnel} />
+        <TurboCard tunnel={tunnel} group={auth?.group ?? null} />
         <nav className="sidebar__nav" style={{ paddingBottom: 'var(--space-3)' }}>{renderNav(BOTTOM_NAV)}</nav>
       </aside>
 

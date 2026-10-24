@@ -356,6 +356,7 @@ export const zh = {
     statusRunning: '运行中',
     statusError: '异常',
     comingSoon: '功能即将上线，敬请期待',
+    svipOnly: '直链加速为 SVIP 专属，请升级 SVIP 后使用',
   },
 } as const;
 

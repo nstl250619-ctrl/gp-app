@@ -23,6 +23,8 @@ export interface AppStatus {
   maskedApiKey?: string | null;
   targetDetected: boolean;
   shopReady: boolean;
+  /** 账号分组（new-api user.group，如 svip/月卡组-1）；未登录或获取失败为 null */
+  group?: string | null;
 }
 
 export interface InstanceCapability {
