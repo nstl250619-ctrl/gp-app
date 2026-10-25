@@ -288,6 +288,8 @@ fn is_global_verify_failure(reason: &str) -> bool {
 pub struct ModelTestResult {
     pub model: String,
     pub ok: bool,
+    /// 响应超时：上游拥挤但未判定为不可用。前端显示黄色「拥挤」并保留勾选。
+    pub slow: bool,
     pub error: Option<String>,
 }
 
@@ -299,17 +301,19 @@ async fn precheck_models(
     model_ids: &[String],
     base_url: &Option<String>,
     data_dir: &PathBuf,
-) -> (Vec<String>, Vec<(String, String)>) {
+) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     let key = match api_key_for(target) {
         Ok(k) => k,
-        Err(_) => return (model_ids.to_vec(), Vec::new()),
+        Err(_) => return (model_ids.to_vec(), Vec::new(), Vec::new()),
     };
     let url = match normalize_base_url(base_url.clone(), target, data_dir) {
         Ok(u) => u,
-        Err(_) => return (model_ids.to_vec(), Vec::new()),
+        Err(_) => return (model_ids.to_vec(), Vec::new(), Vec::new()),
     };
     let client = crate::newapi::NewApiClient::new(&url);
     let mut ok: Vec<String> = Vec::new();
+    // 超时（上游拥挤）：既不算通过也不算不可用，单独成组保留勾选
+    let mut slow: Vec<String> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
     let mut global_fail: Option<String> = None;
     // 分批并发（每批 8 个；请求都是 max_tokens=1 的轻量探活）
@@ -333,8 +337,8 @@ async fn precheck_models(
                     if is_global_verify_failure(&reason) {
                         global_fail = Some(reason); // 全局性失败：稍后广播到全部模型
                     } else if lower.contains("响应超时") || lower.contains("timeout") {
-                        // 超时：上游挂起，重试只会再等 12s，直接判定不可用
-                        failed.push((m, reason));
+                        // 超时：上游拥挤。不判死（保留勾选），前端标黄「拥挤」
+                        slow.push(m);
                     } else {
                         // 其他失败（如「提供商不在可用列表」）可能是随机路由撞到了不匹配的渠道：
                         // 重试一次再判定，避免把好模型误判（同模型多渠道路由，重试大概率命中健康渠道）。
@@ -350,7 +354,7 @@ async fn precheck_models(
                     // 其他网络错误（DNS/连接失败）→ 不确定，按通过处理（不误伤）。
                     let msg = e.to_string();
                     if msg.contains("响应超时") {
-                        failed.push((m, "响应超时（模型上游未响应）".into()));
+                        slow.push(m);
                     } else {
                         ok.push(m);
                     }
@@ -361,12 +365,14 @@ async fn precheck_models(
     // 全局性失败（额度/密钥/限流）：对「测试连通」而言全部模型都不可用，逐个标注原因
     if let Some(reason) = global_fail {
         let failed_all: Vec<(String, String)> = model_ids.iter().map(|m| (m.clone(), reason.clone())).collect();
-        return (Vec::new(), failed_all);
+        return (Vec::new(), Vec::new(), failed_all);
     }
     // 保持用户勾选顺序（并发完成顺序不定）
     let mut ok_set: std::collections::HashSet<String> = ok.into_iter().collect();
     let ok: Vec<String> = model_ids.iter().filter(|m| ok_set.remove(*m)).cloned().collect();
-    (ok, failed)
+    let mut slow_set: std::collections::HashSet<String> = slow.into_iter().collect();
+    let slow: Vec<String> = model_ids.iter().filter(|m| slow_set.remove(*m)).cloned().collect();
+    (ok, slow, failed)
 }
 
 /// 「测试连通」：对勾选模型逐个测试，返回每个模型的结论（不写配置、不缓存）。
@@ -377,18 +383,27 @@ pub async fn test_models(
     base_url: Option<String>,
     data_dir: &PathBuf,
 ) -> Vec<ModelTestResult> {
-    let (ok, failed) = precheck_models(target, &model_ids, &base_url, data_dir).await;
+    let (ok, slow, failed) = precheck_models(target, &model_ids, &base_url, data_dir).await;
     let ok_set: std::collections::HashSet<String> = ok.into_iter().collect();
+    let slow_set: std::collections::HashSet<String> = slow.into_iter().collect();
     let mut failed_map: std::collections::HashMap<String, String> = failed.into_iter().collect();
     model_ids
         .into_iter()
         .map(|m| {
             if ok_set.contains(&m) {
-                ModelTestResult { model: m, ok: true, error: None }
+                ModelTestResult { model: m, ok: true, slow: false, error: None }
+            } else if slow_set.contains(&m) {
+                // 拥挤：不判死、不取消勾选，仅提示响应慢
+                ModelTestResult {
+                    model: m,
+                    ok: true,
+                    slow: true,
+                    error: Some("模型拥挤，响应时间较长".into()),
+                }
             } else if let Some(err) = failed_map.remove(&m) {
-                ModelTestResult { model: m, ok: false, error: Some(friendly_verify_error(&err)) }
+                ModelTestResult { model: m, ok: false, slow: false, error: Some(friendly_verify_error(&err)) }
             } else {
-                ModelTestResult { model: m, ok: false, error: Some("未返回结果".into()) }
+                ModelTestResult { model: m, ok: false, slow: false, error: Some("未返回结果".into()) }
             }
         })
         .collect()

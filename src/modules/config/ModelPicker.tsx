@@ -8,7 +8,7 @@ interface Props {
   selected: string[];
   single?: boolean;
   showTitle?: boolean;
-  testResults?: Record<string, { ok: boolean; error?: string }>;
+  testResults?: Record<string, { ok: boolean; slow?: boolean; error?: string }>;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
@@ -43,10 +43,10 @@ export default function ModelPicker({ available, selected, single = false, showT
                       fontWeight: 600,
                       fontSize: 12,
                       whiteSpace: 'nowrap',
-                      color: tr.ok ? '#16a34a' : '#dc2626',
+                      color: !tr.ok ? '#dc2626' : tr.slow ? '#d97706' : '#16a34a',
                     }}
                   >
-                    {tr.ok ? '✓ 200' : '×'}
+                    {!tr.ok ? '×' : tr.slow ? t('config.modelCrowded') : '✓ 200'}
                   </span>
                 )}
               </label>

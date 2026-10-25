@@ -48,7 +48,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [busy, setBusy] = useState(false);
   // 「测试连通」：用户主动触发的模型探测（导入不再做预检）
   const [testing, setTesting] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({});
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; slow?: boolean; error?: string }>>({});
   const [pathDraft, setPathDraft] = useState('');
   const pathDraftRef = useRef('');
   const pathDirty = useRef(false);
@@ -215,31 +215,38 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   };
 
   // 「测试连通」：对勾选模型逐个真实测试，不写配置。
-  // 通过的标 ✓200；失败的标 × 并自动取消勾选（用户仍可手动重勾，导入时不拦）。
+  // 三态：✓200 通过 / ✔拥挤（超时，黄色，保留勾选）/ × 不可用（自动取消勾选）。
   const testModels = async () => {
     const ids = selectedRef.current;
     if (ids.length === 0) return;
     setTesting(true);
     setResult(null);
     try {
-      const r = await invokeCommand<Array<{ model: string; ok: boolean; error?: string | null }>>(
+      const r = await invokeCommand<Array<{ model: string; ok: boolean; slow?: boolean; error?: string | null }>>(
         'install.testModels',
         { target: tab, modelIds: ids, baseUrl: baseUrlRef.current },
       );
-      const map: Record<string, { ok: boolean; error?: string }> = {};
-      r.forEach((x) => { map[x.model] = { ok: x.ok, error: x.error || undefined }; });
+      const map: Record<string, { ok: boolean; slow?: boolean; error?: string }> = {};
+      r.forEach((x) => { map[x.model] = { ok: x.ok, slow: !!x.slow, error: x.error || undefined }; });
       setTestResults(map);
       const failedSet = new Set(r.filter((x) => !x.ok).map((x) => x.model));
-      const okCount = r.filter((x) => x.ok).length;
+      const okCount = r.filter((x) => x.ok && !x.slow).length;
+      const slowCount = r.filter((x) => x.ok && x.slow).length;
       if (failedSet.size > 0) {
-        // 失败的自动取消勾选（用户可手动重勾）
+        // 仅真正不可用的才取消勾选；拥挤（超时）保留勾选
         const next = selectedRef.current.filter((m) => !failedSet.has(m));
         selectedRef.current = next;
         setSelected(next);
         saveModels(tab, next);
+        const slowPart = slowCount > 0 ? `，${slowCount} ${t('config.testSlow')}` : '';
         setResult({
           ok: false,
-          text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}，${failedSet.size} ${t('config.testFailed')}（${t('config.testUnchecked')}）`,
+          text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}${slowPart}，${failedSet.size} ${t('config.testFailed')}（${t('config.testUnchecked')}）`,
+        });
+      } else if (slowCount > 0) {
+        setResult({
+          ok: true,
+          text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}，${slowCount} ${t('config.testSlow')}（${t('config.testSlowKept')}）`,
         });
       } else {
         setResult({ ok: true, text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}` });
