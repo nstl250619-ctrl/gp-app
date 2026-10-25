@@ -54,6 +54,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pathDirty = useRef(false);
   const [available, setAvailable] = useState<string[]>([]);
   const [modelsOffline, setModelsOffline] = useState(false);
+  // 「刷新」：网关掉线后重新拉取可用模型列表
+  const [refreshing, setRefreshing] = useState(false);
   // 冷启动时序防抖：会话静默重登期间首次拉取可能失败，仅自动重试一次
   const modelsRetryRef = useRef(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -187,6 +189,30 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   }, [tab, loadPlan, refreshKeys]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 「刷新」：重新拉取可用模型列表（长时间挂机后网关掉线、回落离线清单时一键重连）
+  const refreshModels = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setResult(null);
+    try {
+      const res = await invokeCommand<AvailableModels>('install.availableModels', { target: tab });
+      setModelsOffline(res.offline);
+      setAvailable(res.models);
+      const kept = selectedRef.current.filter((m) => res.models.includes(m));
+      const next = kept.length > 0 ? kept : loadSavedModels(tab, res.models);
+      selectedRef.current = next;
+      setSelected(next);
+      saveModels(tab, next);
+      loadPlan(next);
+      setPlanState('ready');
+      setMsg(res.offline ? t('config.refreshOffline') : null);
+    } catch {
+      setMsg(t('config.refreshOffline'));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [tab, loadPlan, refreshing]);
 
   const copyPath = async () => {
     const p = pathDraft || plan?.path;
@@ -426,6 +452,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             onToggle={toggleModel}
             onSelectAll={selectAllModels}
             onClear={clearModels}
+            onRefresh={refreshModels}
+            refreshing={refreshing}
           />
 
           {planState === 'loading' && (

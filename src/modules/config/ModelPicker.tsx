@@ -12,9 +12,12 @@ interface Props {
   onToggle: (id: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
+  /** 重新拉取可用模型列表（网关掉线回落离线清单后，一键重连） */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
-export default function ModelPicker({ available, selected, single = false, showTitle = true, testResults, onToggle, onSelectAll, onClear }: Props) {
+export default function ModelPicker({ available, selected, single = false, showTitle = true, testResults, onToggle, onSelectAll, onClear, onRefresh, refreshing = false }: Props) {
   return (
     <>
       {showTitle && <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.selectModels')}</div>}
@@ -22,6 +25,11 @@ export default function ModelPicker({ available, selected, single = false, showT
         <div className="model-picker__head">
           {!single && <button type="button" className="link-btn" onClick={onSelectAll}>{t('config.selectAll')}</button>}
           <button type="button" className="link-btn" onClick={onClear}>{t('config.clear')}</button>
+          {onRefresh && (
+            <button type="button" className="link-btn" onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? t('config.refreshing') : t('config.refresh')}
+            </button>
+          )}
           <span className="muted small" style={{ marginLeft: 'auto' }}>
             {t('config.selectedModels')} {selected.length}
           </span>
