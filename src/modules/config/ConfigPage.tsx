@@ -37,6 +37,10 @@ function saveModels(t: TabKey, ids: string[]): void {
   try { localStorage.setItem(modelsKey(t), JSON.stringify(ids)); } catch { /* ignore */ }
 }
 
+// 冷启动自动重试上限：仅首次进卡时网关会话可能未就绪（返回离线兜底清单）。
+// 长时间挂机掉线不自动轮询，由用户点「刷新」手动重连。
+const COLD_MODEL_RETRY_MAX = 3;
+
 export default function ConfigPage({ onNavigate }: PageProps) {
   const [tab, setTab] = useState<TabKey>('workbuddy');
   const [detect, setDetect] = useState<DetectResult | null>(null);
@@ -56,8 +60,9 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [modelsOffline, setModelsOffline] = useState(false);
   // 「刷新」：网关掉线后重新拉取可用模型列表
   const [refreshing, setRefreshing] = useState(false);
-  // 冷启动时序防抖：会话静默重登期间首次拉取可能失败，仅自动重试一次
-  const modelsRetryRef = useRef(false);
+  // 冷启动时序防抖：首次进卡时网关会话可能未就绪（拿到的可能是离线兜底清单），自动重试有限次
+  const modelsRetryRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const selectedRef = useRef<string[]>([]);
   const modelsDirty = useRef(false);
@@ -146,6 +151,14 @@ export default function ConfigPage({ onNavigate }: PageProps) {
         const list = res.models;
         setModelsOffline(res.offline);
         setAvailable(list);
+        // 冷启动：拿到离线兜底清单说明网关会话尚未就绪，自动重试（最多 3 次，间隔 3s）
+        if (res.offline && modelsRetryRef.current < COLD_MODEL_RETRY_MAX && retryTimerRef.current === null) {
+          modelsRetryRef.current += 1;
+          retryTimerRef.current = window.setTimeout(() => {
+            retryTimerRef.current = null;
+            load();
+          }, 3000);
+        }
         if (!modelsDirty.current) {
           // restore last saved selection for this target (per-target persistence),
           // then persist it immediately so the first-seen state is remembered too.
@@ -178,17 +191,28 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           } catch {
             setPlanState('keyMissing'); // surface instead of silent swallow
           }
-        } else if (!modelsRetryRef.current) {
-          // 冷启动时序：会话静默重登期间首次拉取可能失败（「网关未连通」+ 误导的重新登录提示），
-          // 延迟重试一次；仍失败则停留当前态，由用户切卡/操作触发再拉。
-          modelsRetryRef.current = true;
+        } else if (modelsRetryRef.current < COLD_MODEL_RETRY_MAX) {
+          // 冷启动时序：会话静默重登期间拉取失败 → 延迟重试；用尽后停留当前态，由「刷新」手动重连
+          modelsRetryRef.current += 1;
           setMsg(null);
-          setTimeout(() => load(), 3000);
+          if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = window.setTimeout(() => {
+            retryTimerRef.current = null;
+            load();
+          }, 3000);
         }
       });
   }, [tab, loadPlan, refreshKeys]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 卸载时清理冷启动重试定时器
+  useEffect(() => () => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   // 「刷新」：重新拉取可用模型列表（长时间挂机后网关掉线、回落离线清单时一键重连）
   const refreshModels = useCallback(async () => {
@@ -320,6 +344,12 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pickTab = (key: TabKey) => {
     setTab(key);
     setResult(null);
+    // 切卡视为新的「冷启动」：重置自动重试配额并取消排队中的重试
+    modelsRetryRef.current = 0;
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     // 切卡清空测试结果（不同卡的模型集不同，避免旧标记串卡）
     setTestResults({});
     pathDirty.current = false;
