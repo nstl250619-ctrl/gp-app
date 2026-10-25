@@ -55,10 +55,23 @@ const EMPTY_STATUS: AppStatus = {
 /// 确认上线时改 true 并恢复 secrets.rs / tunnel.rs / secrets.enc 的真实凭据。
 const TURBO_ENABLED = true;
 
+/// 统一取错误文案（Tauri 命令错误可能是字符串或 {message} 对象）。
+function toMessage(e: unknown): string {
+  if (typeof e === 'string') return e;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
+  return String(e);
+}
+
 /// 直链加速卡片（会员功能公告卡）：无独立页面，侧栏公告式卡片。
 /// 状态映射：stopped→启动(可点) / connecting→连接中 / reconnecting→重试中 /
 /// connected|degraded→运行中 / error→重试(可点，start 在 error 态语义为取消旧轮次重启)。
-function TurboCard({ tunnel, group }: { tunnel: TunnelStatus | null; group: string | null }) {
+function TurboCard({ tunnel, group, onStart, onStop, error }: {
+  tunnel: TunnelStatus | null;
+  group: string | null;
+  onStart: () => void;
+  onStop: () => void;
+  error: string | null;
+}) {
   const phase = tunnel?.phase ?? 'stopped';
   // 会员判定（产品决策）：仅 svip 分组可启动；分组未知按非会员处理
   const isSvip = group === 'svip';
@@ -106,7 +119,7 @@ function TurboCard({ tunnel, group }: { tunnel: TunnelStatus | null; group: stri
           className="turbo-btn turbo-btn--primary"
           disabled={!canStart}
           title={hint}
-          onClick={() => invokeCommand('tunnel.start', {}).catch(() => {})}
+          onClick={onStart}
         >
           {startLabel}
         </button>
@@ -115,7 +128,7 @@ function TurboCard({ tunnel, group }: { tunnel: TunnelStatus | null; group: stri
           className="turbo-btn"
           disabled={!TURBO_ENABLED || phase === 'stopped'}
           title={hint}
-          onClick={() => invokeCommand('tunnel.stop', {}).catch(() => {})}
+          onClick={onStop}
         >
           {t('turbo.stop')}
         </button>
@@ -124,6 +137,11 @@ function TurboCard({ tunnel, group }: { tunnel: TunnelStatus | null; group: stri
         <span className={dotClass} />
         <span>{statusLabel}</span>
       </div>
+      {error && (
+        <div className="hint" style={{ color: 'var(--danger)', marginTop: 'var(--space-1)', fontSize: 12 }}>
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -138,6 +156,8 @@ export default function App() {
   const [auth, setAuth] = useState<AppStatus | null>(null);
   // 隧道状态（底部导航启动/停止控件用）：事件驱动，无独立页面
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  // 隧道操作错误（启动/停止失败时显示在卡片上，不再静默吞掉）
+  const [tunnelError, setTunnelError] = useState<string | null>(null);
 
   useEffect(() => {
     invokeCommand<TunnelStatus>('tunnel.status', {}).then(setTunnel).catch(() => {});
@@ -156,6 +176,33 @@ export default function App() {
       off?.();
     };
   }, []);
+
+  // 隧道操作：错误不再吞（用户点「启动」无感就是这里吞了错误）+ 主动拉状态兜底事件延迟/丢失
+  const refreshTunnel = () => {
+    invokeCommand<TunnelStatus>('tunnel.status', {}).then(setTunnel).catch(() => {});
+  };
+  const startTunnel = async () => {
+    setTunnelError(null);
+    try {
+      await invokeCommand('tunnel.start', {});
+    } catch (e) {
+      setTunnelError(toMessage(e));
+    }
+    // 立即 + 延迟刷新：ssh 起来后状态要过一两秒才变 connected，事件也可能丢
+    refreshTunnel();
+    setTimeout(refreshTunnel, 1500);
+    setTimeout(refreshTunnel, 4000);
+  };
+  const stopTunnel = async () => {
+    setTunnelError(null);
+    try {
+      await invokeCommand('tunnel.stop', {});
+    } catch (e) {
+      setTunnelError(toMessage(e));
+    }
+    refreshTunnel();
+    setTimeout(refreshTunnel, 800);
+  };
 
   // 存量升级用户补 DSH 专属 key 明文（幂等）：v0.3.0 前未写过钥匙串条目，
   // 升级后不重新登录也要就绪；未登录时后端静默失败，登录流程会再补。
@@ -197,20 +244,20 @@ export default function App() {
       .catch(() => setAuth(EMPTY_STATUS));
   }, []);
 
-  // 认证态刷新（H2）：窗口重新获得焦点时 + 每 60 秒。
-  // 购买/兑换 SVIP 订阅后 group 会变，不刷新的话直链加速按钮会一直保持禁用（提示「请升级 SVIP」）。
+  // 认证态刷新（H2）：仅窗口聚焦时刷新，30 秒节流。
+  // 不做定时轮询——会话失效时轮询会反复触发静默重登，撞上 Shop 登录限流（同账号 10 次/分钟）。
   useEffect(() => {
+    let last = 0;
     const refreshAuth = () => {
+      const now = Date.now();
+      if (now - last < 30_000) return;
+      last = now;
       invokeCommand<AppStatus>('app.status', {})
         .then(setAuth)
         .catch(() => {});
     };
     window.addEventListener('focus', refreshAuth);
-    const timer = window.setInterval(refreshAuth, 60_000);
-    return () => {
-      window.removeEventListener('focus', refreshAuth);
-      window.clearInterval(timer);
-    };
+    return () => window.removeEventListener('focus', refreshAuth);
   }, []);
 
   useEffect(() => {
@@ -296,7 +343,7 @@ export default function App() {
         >
           QQ:237525313
         </button>
-        <TurboCard tunnel={tunnel} group={auth?.group ?? null} />
+        <TurboCard tunnel={tunnel} group={auth?.group ?? null} onStart={startTunnel} onStop={stopTunnel} error={tunnelError} />
         <nav className="sidebar__nav" style={{ paddingBottom: 'var(--space-3)' }}>{renderNav(BOTTOM_NAV)}</nav>
       </aside>
 

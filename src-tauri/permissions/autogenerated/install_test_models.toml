@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-test-models"
+description = "Enables the install_test_models command without any pre-configured scope."
+commands.allow = ["install_test_models"]
+
+[[permission]]
+identifier = "deny-install-test-models"
+description = "Denies the install_test_models command without any pre-configured scope."
+commands.deny = ["install_test_models"]

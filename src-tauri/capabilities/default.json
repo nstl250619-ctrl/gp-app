@@ -16,6 +16,7 @@
     "allow-app-track-event",
     "allow-install-detect",
     "allow-install-available-models",
+    "allow-install-test-models",
     "allow-install-plan",
     "allow-install-apply",
     "allow-install-rollback",

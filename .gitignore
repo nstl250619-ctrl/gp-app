@@ -15,3 +15,12 @@ dev.err
 _model_select_mock.*
 model_mock.png
 _deploy/
+
+# GP tunnel monitor API key (secret)
+tools/.gp_key
+
+# 运行日志与本地测试产物
+logs/
+tools/.certs/
+__pycache__/
+*.pyc

@@ -46,6 +46,9 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // 「测试连通」：用户主动触发的模型探测（导入不再做预检）
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({});
   const [pathDraft, setPathDraft] = useState('');
   const pathDraftRef = useRef('');
   const pathDirty = useRef(false);
@@ -196,7 +199,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     try {
       const r = await invokeCommand<ApplyResult>('install.apply', {
-        target: tab, modelIds: selectedRef.current, verify: true, customPath: pathDraftRef.current || undefined, baseUrl: baseUrlRef.current,
+        // 导入不做任何预检：只把勾选的模型写入配置（预检已拆到「测试连通」）
+        target: tab, modelIds: selectedRef.current, verify: false, customPath: pathDraftRef.current || undefined, baseUrl: baseUrlRef.current,
       });
       const ok = r.status === 'applied';
       setResult({ ok, text: ok ? (r.message || t('config.applySuccess')) : r.message });
@@ -207,6 +211,43 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       setResult({ ok: false, text: errorMessage(e) });
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 「测试连通」：对勾选模型逐个真实测试，不写配置。
+  // 通过的标 ✓200；失败的标 × 并自动取消勾选（用户仍可手动重勾，导入时不拦）。
+  const testModels = async () => {
+    const ids = selectedRef.current;
+    if (ids.length === 0) return;
+    setTesting(true);
+    setResult(null);
+    try {
+      const r = await invokeCommand<Array<{ model: string; ok: boolean; error?: string | null }>>(
+        'install.testModels',
+        { target: tab, modelIds: ids, baseUrl: baseUrlRef.current },
+      );
+      const map: Record<string, { ok: boolean; error?: string }> = {};
+      r.forEach((x) => { map[x.model] = { ok: x.ok, error: x.error || undefined }; });
+      setTestResults(map);
+      const failedSet = new Set(r.filter((x) => !x.ok).map((x) => x.model));
+      const okCount = r.filter((x) => x.ok).length;
+      if (failedSet.size > 0) {
+        // 失败的自动取消勾选（用户可手动重勾）
+        const next = selectedRef.current.filter((m) => !failedSet.has(m));
+        selectedRef.current = next;
+        setSelected(next);
+        saveModels(tab, next);
+        setResult({
+          ok: false,
+          text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}，${failedSet.size} ${t('config.testFailed')}（${t('config.testUnchecked')}）`,
+        });
+      } else {
+        setResult({ ok: true, text: `${t('config.testDone')}：${okCount} ${t('config.testPassed')}` });
+      }
+    } catch (e) {
+      setResult({ ok: false, text: errorMessage(e) });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -246,6 +287,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
   const pickTab = (key: TabKey) => {
     setTab(key);
     setResult(null);
+    // 切卡清空测试结果（不同卡的模型集不同，避免旧标记串卡）
+    setTestResults({});
     pathDirty.current = false;
     modelsDirty.current = false;
     // 切卡后清空选择，load()（依赖 tab 变化）会自动重拉该卡的模型列表并恢复已保存选择。
@@ -372,6 +415,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             selected={selected}
             single={isSingle}
             showTitle={false}
+            testResults={testResults}
             onToggle={toggleModel}
             onSelectAll={selectAllModels}
             onClear={clearModels}
@@ -387,7 +431,10 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
             <button type="button" className="btn btn-grad" disabled={busy || !pathDraft.trim() || selected.length === 0} onClick={apply}>
               <Wand2 size={15} />
-              {t('config.importModels')} · {selected.length}
+              {busy ? t('config.importing') : `${t('config.importModels')} · ${selected.length}`}
+            </button>
+            <button type="button" className="btn btn--ghost" disabled={testing || busy || selected.length === 0} onClick={testModels}>
+              {testing ? t('config.testingModels') : t('config.testModels')}
             </button>
             <button type="button" className="btn btn--ghost" onClick={() => onNavigate('records')}>
               {t('config.watchRecords')}

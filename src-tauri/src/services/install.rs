@@ -282,15 +282,18 @@ fn is_global_verify_failure(reason: &str) -> bool {
         || l.contains("too many requests")
 }
 
-/// 预检结果缓存（M4）：同 key + base_url + 模型集，5 分钟内复用，避免重复导入全量重验。
-static PRECHECK_CACHE: std::sync::Mutex<Option<(std::time::Instant, String, Vec<String>, Vec<(String, String)>)>> =
-    std::sync::Mutex::new(None);
+/// 连通性测试结果（用户主动点「测试连通」时，逐个模型的结论）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTestResult {
+    pub model: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
 
-/// 导入前预检：逐个验证模型在当前 key + base_url 下是否可用，拆「可用 / 不可用（含原因）」。
-/// - 并发分批（每批 4 个）：13 个模型从 ~40s 压到 ~10s 内（M2）。
-/// - 同 key+url+模型集 5 分钟内复用结果（M4）。
-/// - key 缺失、base_url 解析失败、网络错误 → 视为「不确定」，保留模型（不误摘）。
-/// - 额度/密钥/限流等全局性失败 → 整批保留 + 提示（不把整批模型都摘掉）。
+/// 逐个验证模型在当前 key + base_url 下是否可用（并发分批 + 短超时 + 失败重试一次）。
+/// 只做测试：不写配置、不缓存——每次调用都真实探测，上游恢复后立刻能测出来。
+/// key 缺失 / base_url 解析失败 / 普通网络错误 → 视为「不确定」，按通过处理（不误伤）。
 async fn precheck_models(
     target: &str,
     model_ids: &[String],
@@ -305,21 +308,12 @@ async fn precheck_models(
         Ok(u) => u,
         Err(_) => return (model_ids.to_vec(), Vec::new()),
     };
-    // M4：缓存命中直接复用（换号后 key 变化 → cache_key 不匹配 → 自动重验）
-    let cache_key = format!("{}|{}|{}", key, url, model_ids.join(","));
-    if let Ok(c) = PRECHECK_CACHE.lock() {
-        if let Some((at, k, ok, failed)) = c.as_ref() {
-            if k == &cache_key && at.elapsed() < std::time::Duration::from_secs(300) {
-                return (ok.clone(), failed.clone());
-            }
-        }
-    }
     let client = crate::newapi::NewApiClient::new(&url);
     let mut ok: Vec<String> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
-    let mut global_fail: Option<(String, String)> = None;
-    // M2：分批并发（每批 4 个）控制服务器压力
-    for chunk in model_ids.chunks(4) {
+    let mut global_fail: Option<String> = None;
+    // 分批并发（每批 8 个；请求都是 max_tokens=1 的轻量探活）
+    for chunk in model_ids.chunks(8) {
         let mut set = tokio::task::JoinSet::new();
         for m in chunk {
             let client = client.clone();
@@ -335,81 +329,87 @@ async fn precheck_models(
             match r {
                 Ok(Ok(())) => ok.push(m),
                 Ok(Err(reason)) => {
+                    let lower = reason.to_lowercase();
                     if is_global_verify_failure(&reason) {
-                        global_fail = Some((m, reason)); // 全局性失败：最后整批保留
-                    } else {
+                        global_fail = Some(reason); // 全局性失败：稍后广播到全部模型
+                    } else if lower.contains("响应超时") || lower.contains("timeout") {
+                        // 超时：上游挂起，重试只会再等 12s，直接判定不可用
                         failed.push((m, reason));
+                    } else {
+                        // 其他失败（如「提供商不在可用列表」）可能是随机路由撞到了不匹配的渠道：
+                        // 重试一次再判定，避免把好模型误判（同模型多渠道路由，重试大概率命中健康渠道）。
+                        match client.verify_key(&key, &m).await {
+                            Ok(Ok(())) => ok.push(m),
+                            Ok(Err(reason2)) => failed.push((m, reason2)),
+                            Err(_) => ok.push(m),
+                        }
                     }
                 }
-                Err(_) => ok.push(m), // 网络错误：不确定不可用，保留
+                Err(e) => {
+                    // 请求超时（连接成功但模型上游 12s 无响应）→ 视为不可用；
+                    // 其他网络错误（DNS/连接失败）→ 不确定，按通过处理（不误伤）。
+                    let msg = e.to_string();
+                    if msg.contains("响应超时") {
+                        failed.push((m, "响应超时（模型上游未响应）".into()));
+                    } else {
+                        ok.push(m);
+                    }
+                }
             }
         }
     }
-    // H1：全局性失败（额度/密钥/限流）→ 整批保留（配置本身没问题），只带一条提示，且不缓存。
-    if let Some(g) = global_fail {
-        return (model_ids.to_vec(), vec![g]);
+    // 全局性失败（额度/密钥/限流）：对「测试连通」而言全部模型都不可用，逐个标注原因
+    if let Some(reason) = global_fail {
+        let failed_all: Vec<(String, String)> = model_ids.iter().map(|m| (m.clone(), reason.clone())).collect();
+        return (Vec::new(), failed_all);
     }
     // 保持用户勾选顺序（并发完成顺序不定）
     let mut ok_set: std::collections::HashSet<String> = ok.into_iter().collect();
     let ok: Vec<String> = model_ids.iter().filter(|m| ok_set.remove(*m)).cloned().collect();
-    failed.sort_by(|a, b| a.0.cmp(&b.0));
-    if let Ok(mut c) = PRECHECK_CACHE.lock() {
-        *c = Some((std::time::Instant::now(), cache_key, ok.clone(), failed.clone()));
-    }
     (ok, failed)
 }
 
-/// 预检 + 写入（产品决策：预检与载入分开）：
-/// 先逐个预检，摘除不可用模型，只把可用模型写入配置；摘除项弱化提示，不阻断成功。
+/// 「测试连通」：对勾选模型逐个测试，返回每个模型的结论（不写配置、不缓存）。
+/// 失败的模型由前端取消勾选（用户仍可手动重勾，导入时不拦）。
+pub async fn test_models(
+    target: &str,
+    model_ids: Vec<String>,
+    base_url: Option<String>,
+    data_dir: &PathBuf,
+) -> Vec<ModelTestResult> {
+    let (ok, failed) = precheck_models(target, &model_ids, &base_url, data_dir).await;
+    let ok_set: std::collections::HashSet<String> = ok.into_iter().collect();
+    let mut failed_map: std::collections::HashMap<String, String> = failed.into_iter().collect();
+    model_ids
+        .into_iter()
+        .map(|m| {
+            if ok_set.contains(&m) {
+                ModelTestResult { model: m, ok: true, error: None }
+            } else if let Some(err) = failed_map.remove(&m) {
+                ModelTestResult { model: m, ok: false, error: Some(friendly_verify_error(&err)) }
+            } else {
+                ModelTestResult { model: m, ok: false, error: Some("未返回结果".into()) }
+            }
+        })
+        .collect()
+}
+
+/// 写入配置（产品决策：预检已拆到独立的「测试连通」，导入只写用户勾选的模型，不做任何验证）。
 /// 锁只在同步写入段持有，绝不跨 await（async 命令要求 Future: Send）。
 pub async fn apply_with_verify(
     target: String,
     model_ids: Vec<String>,
-    verify: bool,
+    _verify: bool,
     custom_path: Option<String>,
     base_url: Option<String>,
     data_dir: &PathBuf,
 ) -> AppResult<ApplyResult> {
-    let (ok_ids, failed) = if verify && !model_ids.is_empty() {
-        precheck_models(&target, &model_ids, &base_url, data_dir).await
-    } else {
-        (model_ids.clone(), Vec::new())
-    };
-
-    if ok_ids.is_empty() {
-        let reason = failed
-            .first()
-            .map(|(_, r)| friendly_verify_error(r))
-            .unwrap_or_else(|| "未知原因".into());
-        return Ok(ApplyResult {
-            status: "failed".into(),
-            path: String::new(),
-            backup_path: None,
-            verify_ok: true,
-            requires_restart: false,
-            message: format!("所选模型均暂不可用，未导入：{}", reason),
-            extra_backups: Vec::new(),
-        });
-    }
-
+    let count = model_ids.len();
     let mut result = {
         let _guard = lock()?;
-        apply_locked(target.clone(), ok_ids.clone(), custom_path, base_url.clone(), data_dir)?
+        apply_locked(target, model_ids, custom_path, base_url, data_dir)?
     };
-
-    if failed.is_empty() {
-        result.message = format!("导入 {} 个模型成功", ok_ids.len());
-    } else {
-        let names: Vec<String> = failed.iter().map(|(n, _)| n.clone()).collect();
-        let reason = friendly_verify_error(&failed[0].1);
-        result.message = format!(
-            "模型 {} 暂不可用（{}），导入 {} 个模型成功",
-            names.join("、"),
-            reason,
-            ok_ids.len()
-        );
-    }
-
+    result.message = format!("导入 {} 个模型成功", count);
     Ok(result)
 }
 

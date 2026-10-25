@@ -58,6 +58,8 @@ pub async fn login(identifier: String, password: String) -> AppResult<AccountSta
         return Err(AppError::Other("请填写邮箱和密码".into()));
     }
     let user = shop::client_login(&identifier, &password).await?;
+    // 用户主动登录成功：清除静默重登的失败退避（立即恢复会话能力，无需等 60 秒）
+    reset_session_backoff();
     // 换号登录：清掉上一账号的密钥与选择，避免跨账号串钥。
     let same_account = opt(config::CREDENTIAL_ACCOUNT_USERNAME)
         .map(|old| old == user.username || old == user.email)
@@ -150,11 +152,31 @@ pub fn logout() -> AppResult<()> {
     Ok(())
 }
 
+/// 会话建立失败退避（避免撞 Shop 登录限流：同账号 10 次/分钟）。
+static SESSION_FAIL_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// 清除会话失败退避（用户主动登录成功 / 会话恢复后调用）。
+pub fn reset_session_backoff() {
+    if let Ok(mut c) = SESSION_FAIL_AT.lock() {
+        *c = None;
+    }
+}
+
 /// 确保登录态（网关会话）：失效时用密码静默重登一次。
+/// 重登失败后 60 秒内直接返回 SessionExpired——避免 app.status 等多处调用反复打登录接口，
+/// 把 Shop 的「同账号 10 次/分钟」限流打满（用户会看到「操作过于频繁」）。
 pub async fn ensure_session() -> AppResult<String> {
+    if let Ok(c) = SESSION_FAIL_AT.lock() {
+        if let Some(t) = *c {
+            if t.elapsed() < std::time::Duration::from_secs(60) {
+                return Err(AppError::SessionExpired);
+            }
+        }
+    }
     if let Some(t) = opt(config::SHOP_AUTH_TOKEN) {
         // 探活：能取到 self 即会话有效
         if shop::gateway_self().await.is_ok() {
+            reset_session_backoff();
             return Ok(t);
         }
     }
@@ -162,8 +184,18 @@ pub async fn ensure_session() -> AppResult<String> {
         .or_else(|| opt(config::CREDENTIAL_ACCOUNT_USERNAME))
         .ok_or(AppError::SessionExpired)?;
     let password = shop::stored_shop_password().ok_or(AppError::SessionExpired)?;
-    shop::client_login(&identifier, &password).await?;
-    opt(config::SHOP_AUTH_TOKEN).ok_or(AppError::SessionExpired)
+    match shop::client_login(&identifier, &password).await {
+        Ok(_) => {
+            reset_session_backoff();
+            opt(config::SHOP_AUTH_TOKEN).ok_or(AppError::SessionExpired)
+        }
+        Err(e) => {
+            if let Ok(mut c) = SESSION_FAIL_AT.lock() {
+                *c = Some(std::time::Instant::now());
+            }
+            Err(e)
+        }
+    }
 }
 
 /// 建密钥（自动确保）：优先复用同名启用令牌 → 任一启用令牌 → 新建。走网关。
@@ -254,17 +286,36 @@ pub async fn list_keys() -> AppResult<Vec<KeyItem>> {
         .collect())
 }
 
+/// current_key_group 结果缓存（30 秒，按 token_id 区分）：切卡/刷新时避免重复拉 keys + self 两次网络请求。
+static KEY_GROUP_CACHE: std::sync::Mutex<Option<(std::time::Instant, i64, Option<String>)>> =
+    std::sync::Mutex::new(None);
+
 /// 当前选中 key 的实际分组（模型列表过滤用）：key.group 非空用之，空则回退账号分组
 /// （与 new-api 鉴权语义一致：空 group 的令牌按 user.group 路由）。拿不到时返回 None（列表退回账号级并集）。
 pub async fn current_key_group() -> Option<String> {
     let token_id = stored_token_id()?;
-    let items = shop::gateway_list_keys().await.ok()?;
-    let g = items.iter().find(|t| t.id == token_id)?.group.clone();
-    if !g.is_empty() {
-        return Some(g);
+    // 30 秒缓存：模型列表刷新频繁，避免每次切卡都打两次网关（keys + self）
+    if let Ok(c) = KEY_GROUP_CACHE.lock() {
+        if let Some((at, tid, g)) = c.as_ref() {
+            if *tid == token_id && at.elapsed() < std::time::Duration::from_secs(30) {
+                return g.clone();
+            }
+        }
     }
-    let self_data = shop::gateway_self().await.ok()?;
-    Some(self_data.group)
+    let g = async {
+        let items = shop::gateway_list_keys().await.ok()?;
+        let g = items.iter().find(|t| t.id == token_id)?.group.clone();
+        if !g.is_empty() {
+            return Some(g);
+        }
+        let self_data = shop::gateway_self().await.ok()?;
+        Some(self_data.group)
+    }
+    .await;
+    if let Ok(mut c) = KEY_GROUP_CACHE.lock() {
+        *c = Some((std::time::Instant::now(), token_id, g.clone()));
+    }
+    g
 }
 
 /// 选择某个 key：取明文存钥匙串。走网关。

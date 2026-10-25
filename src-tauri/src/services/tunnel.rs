@@ -324,27 +324,39 @@ fn verified_known_hosts(s: &Secrets) -> AppResult<String> {
 // ---------------------------------------------------------------------------
 
 /// 解析 ssh 可执行文件：优先系统 OpenSSH 固定路径（防 PATH 劫持，P1），fallback PATH。
+/// 统一带 CREATE_NO_WINDOW：ssh 是控制台程序，GUI 进程直接启动会弹出黑色 Terminal 窗口。
 fn ssh_command() -> Command {
     #[cfg(windows)]
     {
         const SYS_SSH: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
         if std::path::Path::new(SYS_SSH).exists() {
-            return Command::new(SYS_SSH);
+            let mut c = Command::new(SYS_SSH);
+            c.creation_flags(CHILD_PROC_FLAGS);
+            return c;
         }
     }
-    Command::new("ssh")
+    let mut c = Command::new("ssh");
+    #[cfg(windows)]
+    c.creation_flags(CHILD_PROC_FLAGS);
+    c
 }
 
 /// 解析 ssh-keygen 可执行文件（同 ssh_command 的可信路径策略）。
+/// 同样带 CREATE_NO_WINDOW：启动/停止隧道时会用它校验私钥，漏了会弹 Terminal。
 fn ssh_keygen_command() -> Command {
     #[cfg(windows)]
     {
         const SYS_KEYGEN: &str = r"C:\Windows\System32\OpenSSH\ssh-keygen.exe";
         if std::path::Path::new(SYS_KEYGEN).exists() {
-            return Command::new(SYS_KEYGEN);
+            let mut c = Command::new(SYS_KEYGEN);
+            c.creation_flags(CHILD_PROC_FLAGS);
+            return c;
         }
     }
-    Command::new("ssh-keygen")
+    let mut c = Command::new("ssh-keygen");
+    #[cfg(windows)]
+    c.creation_flags(CHILD_PROC_FLAGS);
+    c
 }
 
 fn build_ssh_cmd(s: &Secrets, key_path: &Path, kh_path: &Path) -> Command {

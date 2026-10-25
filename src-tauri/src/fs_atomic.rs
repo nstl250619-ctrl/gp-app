@@ -45,8 +45,13 @@ pub fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
 
 #[cfg(windows)]
 pub fn secure_permissions(path: &Path) -> AppResult<()> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW：icacls 是控制台程序，GUI 进程每次写配置都启动它，
+    // 不隐藏就会弹出黑色 Terminal 窗口（用户报告的「导入模型/启停隧道弹很多框」就是这个）。
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let user = std::env::var("USERNAME").unwrap_or_else(|_| ".".into());
     let out = std::process::Command::new("icacls")
+        .creation_flags(CREATE_NO_WINDOW)
         .arg(path)
         .arg("/inheritance:r")
         .arg("/grant:r")

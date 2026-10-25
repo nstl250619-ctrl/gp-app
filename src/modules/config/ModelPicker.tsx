@@ -1,5 +1,6 @@
-// 模型勾选列表：账号可用模型 + 全选/清空 + 已选计数。
+// 模型勾选列表：账号可用模型 + 全选 / 清空 + 已选计数。
 // single=true 时为单模型目标（Codex / Claude Code）：radio 式选择、隐藏「全选」、显示单模型提示。
+// testResults：用户点「测试连通」后每个模型的探测结果（✓ 200 / × 原因），仅展示不影响勾选。
 import { t } from '@/i18n';
 
 interface Props {
@@ -7,12 +8,13 @@ interface Props {
   selected: string[];
   single?: boolean;
   showTitle?: boolean;
+  testResults?: Record<string, { ok: boolean; error?: string }>;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
 }
 
-export default function ModelPicker({ available, selected, single = false, showTitle = true, onToggle, onSelectAll, onClear }: Props) {
+export default function ModelPicker({ available, selected, single = false, showTitle = true, testResults, onToggle, onSelectAll, onClear }: Props) {
   return (
     <>
       {showTitle && <div className="section-title" style={{ marginTop: 'var(--space-4)' }}>{t('config.selectModels')}</div>}
@@ -26,13 +28,30 @@ export default function ModelPicker({ available, selected, single = false, showT
         </div>
         {single && <div className="hint" style={{ marginBottom: 'var(--space-2)' }}>{t('config.singleModelHint')}</div>}
         <div className="model-picker__list">
-          {available.map((m) => (
-            <label key={m} className="model-row">
-              <input type={single ? 'radio' : 'checkbox'} name={single ? 'gp-single-model' : undefined} checked={selected.includes(m)} onChange={() => onToggle(m)} />
-              <span className="gp-prefix">GP:</span>
-              <span>{m}</span>
-            </label>
-          ))}
+          {available.map((m) => {
+            const tr = testResults?.[m];
+            return (
+              <label key={m} className="model-row">
+                <input type={single ? 'radio' : 'checkbox'} name={single ? 'gp-single-model' : undefined} checked={selected.includes(m)} onChange={() => onToggle(m)} />
+                <span className="gp-prefix">GP:</span>
+                <span>{m}</span>
+                {tr && (
+                  <span
+                    title={tr.error || 'HTTP 200'}
+                    style={{
+                      marginLeft: 'auto',
+                      fontWeight: 600,
+                      fontSize: 12,
+                      whiteSpace: 'nowrap',
+                      color: tr.ok ? '#16a34a' : '#dc2626',
+                    }}
+                  >
+                    {tr.ok ? '✓ 200' : '×'}
+                  </span>
+                )}
+              </label>
+            );
+          })}
         </div>
       </div>
     </>

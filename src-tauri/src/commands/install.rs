@@ -29,6 +29,20 @@ pub async fn install_available_models(target: String) -> CommandResult<Available
     CommandResult::ok(AvailableModels { models, offline })
 }
 
+/// 「测试连通」：对勾选模型逐个真实测试（不写配置、不缓存），返回每个模型的通过/失败。
+/// 失败的模型由前端取消勾选（用户可手动重勾）；导入不再做任何预检。
+#[tauri::command]
+pub async fn install_test_models(
+    app: tauri::AppHandle,
+    target: String,
+    model_ids: Vec<String>,
+    base_url: Option<String>,
+) -> CommandResult<Vec<services::install::ModelTestResult>> {
+    let data_dir = app.state::<AppState>().data_dir.clone();
+    let results = services::install::test_models(&target, model_ids, base_url, &data_dir).await;
+    CommandResult::ok(results)
+}
+
 #[tauri::command]
 pub fn install_plan(
     state: State<AppState>,

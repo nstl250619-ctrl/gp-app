@@ -26,6 +26,15 @@ impl NewApiClient {
             .clone()
     }
 
+    /// 预检专用短超时 client（建连 5s、总超时 12s）：
+    /// 正常模型 1-3s 返回；挂起的上游 12s 内判定超时，避免单个坏模型把整批预检拖到 30s+。
+    fn verify_http(&self) -> reqwest::Client {
+        static SHARED: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| crate::services::http_client(5, 12))
+            .clone()
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
@@ -52,13 +61,20 @@ impl NewApiClient {
     /// 失败时透传网关的真实错误（如「额度不足」「Invalid token」），不再吞成 bool 误导排查。
     pub async fn verify_key(&self, key: &str, model: &str) -> AppResult<Result<(), String>> {
         let resp = self
-            .http()
+            .verify_http()
             .post(self.url("/v1/chat/completions"))
             .bearer_auth(key)
             .json(&json!({ "model": model, "messages": [{ "role": "user", "content": "ping" }], "max_tokens": 1 }))
             .send()
             .await
-            .map_err(AppError::Network)?;
+            .map_err(|e| {
+                // 显式标记超时：预检据此判定「模型上游未响应」并摘除（区别于 DNS/连接类网络错误）
+                if e.is_timeout() {
+                    AppError::Other("响应超时（模型上游未响应）".into())
+                } else {
+                    AppError::Network(e)
+                }
+            })?;
         let text = resp.text().await.map_err(|e| AppError::Other(e.to_string()))?;
         let v: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "error": "bad response" }));
         Ok(match v.get("error") {
