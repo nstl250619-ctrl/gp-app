@@ -4,6 +4,7 @@ import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
 import type { AccountStatus } from '@/types/ipc';
 import { t } from '@/i18n';
 import { isValidEmail } from '@/utils/time';
+import BindNewapiDialog from '@/modules/config/BindNewapiDialog';
 
 export type AuthMode = 'login' | 'register' | 'reset';
 
@@ -24,6 +25,8 @@ export default function LoginForm({ mode, onSwitchMode, onSuccess }: Props) {
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  // 中转站密码失效（need_rebind_newapi）：登录页直接弹重绑，避免用户卡死在红字提示
+  const [bindOpen, setBindOpen] = useState(false);
 
   const emailOk = isValidEmail(email);
 
@@ -42,10 +45,23 @@ export default function LoginForm({ mode, onSwitchMode, onSuccess }: Props) {
       setPassword('');
       onSuccess(s.username);
     } catch (e) {
-      setMsg(errorMessage(e));
+      // 中转站密码失效：弹重绑（旧 token 仍有效，绑完自动重试登录）
+      if (isIpcError(e) && e.code === 'NEED_REBIND_NEWAPI') {
+        setBindOpen(true);
+        setMsg(t('login.needRebindHint'));
+      } else {
+        setMsg(errorMessage(e));
+      }
     } finally {
       setBusy(false);
     }
+  };
+
+  // 重绑成功：关闭弹窗并自动重试登录
+  const onRebound = () => {
+    setBindOpen(false);
+    setOkMsg(t('login.rebindDone'));
+    if (identifier && password) void login();
   };
 
   const sendCode = async () => {
@@ -260,6 +276,12 @@ export default function LoginForm({ mode, onSwitchMode, onSuccess }: Props) {
 
       {msg && <div className="login-card__error">{msg}</div>}
       {okMsg && <div className="login-card__hint">{okMsg}</div>}
+
+      <BindNewapiDialog
+        open={bindOpen}
+        onClose={() => setBindOpen(false)}
+        onBound={onRebound}
+      />
 
       <div className="login-card__foot">
         {mode === 'login' && (

@@ -35,6 +35,8 @@ export const zhExtra = {
     goRegister: '立即注册',
     goLogin: '去登录',
     loggingIn: '登录中…',
+    needRebindHint: '中转站账号密码已失效，请在弹窗中重新绑定后继续',
+    rebindDone: '已重新绑定，正在重试登录…',
   },
   topbar: {
     badgeNewapi: 'GP中转服务',
