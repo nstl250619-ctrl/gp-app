@@ -645,8 +645,10 @@ pub async fn gateway_self() -> AppResult<crate::newapi::SelfData> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionInfo {
+    pub plan_id: i64,
     pub total: i64,
     pub used: i64,
+    pub start_time: i64,
     pub end_time: i64,
 }
 
@@ -656,7 +658,7 @@ impl SubscriptionInfo {
     }
 }
 
-pub async fn gateway_subscription() -> AppResult<Option<SubscriptionInfo>> {
+pub async fn gateway_subscription() -> AppResult<Vec<SubscriptionInfo>> {
     #[derive(Deserialize)]
     struct SubItem {
         #[serde(default)]
@@ -664,10 +666,14 @@ pub async fn gateway_subscription() -> AppResult<Option<SubscriptionInfo>> {
     }
     #[derive(Deserialize)]
     struct SubInner {
+        #[serde(default, alias = "plan_id")]
+        plan_id: i64,
         #[serde(default, alias = "amount_total")]
         amount_total: i64,
         #[serde(default, alias = "amount_used")]
         amount_used: i64,
+        #[serde(default, alias = "start_time")]
+        start_time: i64,
         #[serde(default, alias = "end_time")]
         end_time: i64,
     }
@@ -677,12 +683,21 @@ pub async fn gateway_subscription() -> AppResult<Option<SubscriptionInfo>> {
         subscriptions: Vec<SubItem>,
     }
     let d: SubData = gateway_get("/api/user/subscription").await?;
-    Ok(d
+    let mut list: Vec<SubscriptionInfo> = d
         .subscriptions
         .iter()
         .filter_map(|s| s.subscription.as_ref())
-        .map(|s| SubscriptionInfo { total: s.amount_total, used: s.amount_used, end_time: s.end_time })
-        .max_by_key(|s| s.remaining()))
+        .map(|s| SubscriptionInfo {
+            plan_id: s.plan_id,
+            total: s.amount_total,
+            used: s.amount_used,
+            start_time: s.start_time,
+            end_time: s.end_time,
+        })
+        .collect();
+    // new-api 已按 end_time desc 返回；这里再保证一次，前端默认取第 0 条即最新订阅
+    list.sort_by(|a, b| b.end_time.cmp(&a.end_time));
+    Ok(list)
 }
 
 /// 账号可用模型（分组过滤+去重），经网关 /api/user/models。

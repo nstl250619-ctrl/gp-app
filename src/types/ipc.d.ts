@@ -71,6 +71,19 @@ export interface ResetPasswordResult {
   newPassword: string;
 }
 
+/** 单条活跃订阅（用量页订阅卡切换单元），最新在前 */
+export interface SubscriptionCard {
+  planId: number;
+  total: number;
+  used: number;
+  remaining: number;
+  startTime: number;
+  endTime: number;
+  totalUsd: number;
+  usedUsd: number;
+  remainingUsd: number;
+}
+
 export interface QuotaSummary {
   username: string;
   group: string;
@@ -88,8 +101,10 @@ export interface QuotaSummary {
   subscriptionTotalUsd?: number | null;
   /** 订阅已用（USD） */
   subscriptionUsedUsd?: number | null;
-  /** 订阅到期时间（unix 秒；null=未知） */
+  /** 订阅到期时间（unix 秒；null=未知）——多订阅时取最晚 */
   subscriptionEndTime?: number | null;
+  /** 活跃订阅明细（最新在前）；空数组=无订阅 */
+  subscriptions?: SubscriptionCard[];
 }
 
 /** install.availableModels：offline=true 表示网关不可达、当前为离线兜底清单 */

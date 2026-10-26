@@ -33,6 +33,24 @@ pub struct QuotaSummary {
     /// 订阅到期时间（unix 秒；0/None=未知）
     #[serde(default)]
     pub subscription_end_time: Option<i64>,
+    /// 活跃订阅明细（最新在前）；前端做多订阅切换卡，无订阅为空数组
+    #[serde(default)]
+    pub subscriptions: Vec<SubscriptionCard>,
+}
+
+/// 单条活跃订阅（前端切换卡片的展示单元）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionCard {
+    pub plan_id: i64,
+    pub total: i64,
+    pub used: i64,
+    pub remaining: i64,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub total_usd: f64,
+    pub used_usd: f64,
+    pub remaining_usd: f64,
 }
 
 pub async fn get_quota() -> AppResult<QuotaSummary> {
@@ -43,8 +61,32 @@ pub async fn get_quota() -> AppResult<QuotaSummary> {
     );
     let s = s?;
     // 订阅明细（尽力而为：接口失败视为无订阅）
-    let sub = sub.ok().flatten();
-    let subscription_usd = sub.as_ref().filter(|x| x.remaining() > 0).map(|x| config::quota_to_usd(x.remaining()));
+    let subs = sub.unwrap_or_default();
+    // 聚合口径（供积分卡与兼容字段）：所有活跃订阅合计，到期取最晚
+    let agg_total: i64 = subs.iter().map(|x| x.total).sum();
+    let agg_used: i64 = subs.iter().map(|x| x.used).sum();
+    let agg_remain: i64 = subs.iter().map(|x| x.remaining()).sum();
+    let agg_end = subs.iter().map(|x| x.end_time).max().unwrap_or(0);
+    let subscription_usd = if agg_remain > 0 {
+        Some(config::quota_to_usd(agg_remain))
+    } else {
+        None
+    };
+    let cards: Vec<SubscriptionCard> = subs
+        .iter()
+        .map(|x| SubscriptionCard {
+            plan_id: x.plan_id,
+            total: x.total,
+            used: x.used,
+            remaining: x.remaining(),
+            start_time: x.start_time,
+            end_time: x.end_time,
+            total_usd: config::quota_to_usd(x.total),
+            used_usd: config::quota_to_usd(x.used),
+            remaining_usd: config::quota_to_usd(x.remaining()),
+        })
+        .collect();
+    let has_subs = !subs.is_empty();
     // new-api 的 self.quota 本身就是剩余余额（负数=已透支）
     Ok(QuotaSummary {
         username: s.username,
@@ -57,9 +99,10 @@ pub async fn get_quota() -> AppResult<QuotaSummary> {
         used_usd: config::quota_to_usd(s.used_quota),
         remaining_usd: config::quota_to_usd(s.quota),
         subscription_usd,
-        subscription_total_usd: sub.as_ref().map(|x| config::quota_to_usd(x.total)),
-        subscription_used_usd: sub.as_ref().map(|x| config::quota_to_usd(x.used)),
-        subscription_end_time: sub.as_ref().filter(|x| x.end_time > 0).map(|x| x.end_time),
+        subscription_total_usd: has_subs.then(|| config::quota_to_usd(agg_total)),
+        subscription_used_usd: has_subs.then(|| config::quota_to_usd(agg_used)),
+        subscription_end_time: (agg_end > 0).then_some(agg_end),
+        subscriptions: cards,
     })
 }
 

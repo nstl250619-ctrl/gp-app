@@ -1,7 +1,7 @@
 // 用量页：4 张等高统计卡（统一三段结构：标签 → 大数字 → 一行紧凑小字）+ 统计/明细分区。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
-import type { QuotaSummary, UsageDetail } from '@/types/ipc';
+import type { QuotaSummary, SubscriptionCard, UsageDetail } from '@/types/ipc';
 import { t } from '@/i18n';
 import { fmtCredits, fmtUsdFloor2 } from '@/utils/fmt';
 import { formatDateTime } from '@/utils/time';
@@ -19,6 +19,8 @@ export default function UsagePage() {
   const [usageMsg, setUsageMsg] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
   const [bindOpen, setBindOpen] = useState(false);
+  // 多订阅切换：默认第 0 条（最新的那条），订阅列表变化后回到最新
+  const [subIdx, setSubIdx] = useState(0);
 
   const loadUsage = useCallback((range: TimeRange) => {
     setUsageMsg(null);
@@ -80,10 +82,31 @@ export default function UsagePage() {
     );
 
   const sub = quota?.subscriptionUsd != null;
+  // 多订阅切换卡：subs 已按到期时间倒序（最新在前）
+  const subs = quota?.subscriptions ?? [];
+  const subCount = subs.length;
+  const idx = subCount > 0 ? Math.min(subIdx, subCount - 1) : 0;
+  const cur: SubscriptionCard | null = subCount > 0 ? subs[idx] : null;
+  const planName = (id: number) =>
+    id === 2 ? t('usage.subPlanTrial')
+      : id === 3 ? t('usage.subPlanWeek')
+        : id === 4 ? t('usage.subPlanMonth')
+          : id === 5 ? t('usage.subPlanDay')
+            : t('usage.subPlanFallback');
+  const subNavStyle: CSSProperties = {
+    position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+    width: 22, height: 22, borderRadius: '50%', padding: 0, fontSize: 14, lineHeight: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: '1px solid var(--border, #E5E7EB)', background: 'var(--card, #FFF)',
+    color: 'var(--text-2, #4B5563)', cursor: 'pointer',
+  };
   const okCount = usage?.totalRequests ?? 0;
   const failCount = usage?.errorCount ?? 0;
   const totalCalls = okCount + failCount;
   const rate = totalCalls > 0 ? `${Math.round((okCount / totalCalls) * 100)}%` : '—';
+
+  // 订阅列表变化（新增或过期）时回到最新一条
+  useEffect(() => { setSubIdx(0); }, [subCount]);
 
   return (
     <div>
@@ -91,11 +114,23 @@ export default function UsagePage() {
       <div className="sub">{t('config.usageSubtitle')}</div>
 
       <div className="usage-grid usage-grid--4">
-        <div className="stat-card">
-          <div className="stat-card__label">{t('usage.subscriptionBalance')}</div>
-          <div className="stat-card__value">{usd(quota?.subscriptionUsd, fmtUsdFloor2)}</div>
+        <div className="stat-card" style={{ position: 'relative' }}>
+          <div className="stat-card__label">
+            {t('usage.subscriptionBalance')}
+            {subCount > 1 && (
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, opacity: 0.6 }}>{idx + 1}/{subCount}</span>
+            )}
+          </div>
+          <div className="stat-card__value">
+            {cur ? usd(cur.remainingUsd, fmtUsdFloor2) : usd(quota?.subscriptionUsd, fmtUsdFloor2)}
+          </div>
           <div className="stat-card__sub">
-            {sub ? (
+            {cur ? (
+              <>
+                <div>{planName(cur.planId)} · {t('usage.subQuotaRow')} {fmtUsdFloor2(cur.totalUsd)} · {t('usage.subUsedRow')} {fmtUsdFloor2(cur.usedUsd)}</div>
+                <div>{t('usage.subExpireRow')} {cur.endTime > 0 ? formatDateTime(cur.endTime) : '—'}</div>
+              </>
+            ) : sub ? (
               <>
                 <div>{t('usage.subQuotaRow')} {fmtUsdFloor2(quota?.subscriptionTotalUsd ?? 0)} · {t('usage.subUsedRow')} {fmtUsdFloor2(quota?.subscriptionUsedUsd ?? 0)}</div>
                 <div>{t('usage.subExpireRow')} {quota?.subscriptionEndTime ? formatDateTime(quota.subscriptionEndTime) : '—'}</div>
@@ -104,6 +139,28 @@ export default function UsagePage() {
               <div>{t('usage.noSubscription')}</div>
             )}
           </div>
+          {subCount > 1 && (
+            <>
+              <button
+                type="button"
+                aria-label={t('usage.subSwitchPrev')}
+                onClick={() => setSubIdx(Math.max(0, idx - 1))}
+                disabled={idx <= 0}
+                style={{ ...subNavStyle, left: 4, opacity: idx <= 0 ? 0.3 : 1 }}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                aria-label={t('usage.subSwitchNext')}
+                onClick={() => setSubIdx(Math.min(subCount - 1, idx + 1))}
+                disabled={idx >= subCount - 1}
+                style={{ ...subNavStyle, right: 4, opacity: idx >= subCount - 1 ? 0.3 : 1 }}
+              >
+                ›
+              </button>
+            </>
+          )}
         </div>
 
         <div className="stat-card">
