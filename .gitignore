@@ -24,3 +24,8 @@ logs/
 tools/.certs/
 __pycache__/
 *.pyc
+_selftest*/
+
+# 备份文件（手工改配置时的 *.bak-时间戳）
+*.bak-*
+*.bak
