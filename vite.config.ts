@@ -22,7 +22,10 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2021',
+    // macOS 10.15 的 WKWebView 等价 Safari 13：CI 的 macOS job 通过
+    // VITE_BUILD_TARGET=safari13 注入，Windows 构建保持 es2021 不变。
+    target: (process.env.VITE_BUILD_TARGET as 'es2021' | 'safari13' | undefined) || 'es2021',
+    cssTarget: (process.env.VITE_BUILD_TARGET as 'es2021' | 'safari13' | undefined) || 'es2021',
     outDir: 'dist',
   },
 });

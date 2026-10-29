@@ -1,16 +1,20 @@
 name: release
 
-# 打 tag（v*）或手动触发都会构建并发布带签名更新的 GitHub Release。
-# 依赖两个仓库 secret（Settings → Secrets and variables → Actions）：
-#   TAURI_SIGNING_PRIVATE_KEY : 本地 `.tauri/update.key` 的完整内容（多行 base64）
-#   GITHUB_TOKEN              : 由 GitHub 自动提供，无需手动设置
+# 打 tag（v*）构建并发布；也可手动触发（dry_run=true 时只构建产物，不发 Release）。
+# 依赖 secret：
+#   TAURI_SIGNING_PRIVATE_KEY : 本地 .tauri/update.key 的完整内容
+#   GITHUB_TOKEN              : 由 GitHub 自动提供
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只构建产物，不创建 Release（用于验证 macOS universal / 部署目标）'
+        type: boolean
+        default: false
 
-# 创建 Release 需要写权限（否则 GITHUB_TOKEN 报 "Resource not accessible by integration"）
 permissions:
   contents: write
 
@@ -20,10 +24,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows：保持 msi + nsis 不变，前端 target 仍是 es2021
           - platform: windows-latest
             args: '--bundles msi,nsis'
-          - platform: macos-latest
-            args: '--bundles app,dmg'
+          # macOS：pin 住 runner（避免 Xcode 漂到 27 导致 10.15 无法编译）+ universal 双架构
+          - platform: macos-14
+            args: '--target universal-apple-darwin --bundles app,dmg'
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -40,10 +46,55 @@ jobs:
         with:
           workspaces: 'src-tauri -> target'
 
+      # ---------- macOS 专属：Xcode 版本断言 + 双架构 + 部署目标 ----------
+      - name: macOS build env
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          set -euo pipefail
+          echo "── Xcode ──"
+          xcodebuild -version
+          XCODE_VER=$(xcodebuild -version | head -1 | awk '{print $2}')
+          XCODE_MAJOR=${XCODE_VER%%.*}
+          if [ "$XCODE_MAJOR" -ge 27 ]; then
+            echo "::error::Xcode $XCODE_VER 已不支持 macOS 10.15 部署目标，请 pin 更旧的 runner"
+            exit 1
+          fi
+          echo "── rust targets ──"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          echo "── 部署目标 ──"
+          echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
+          for t in x86_64_apple_darwin aarch64_apple_darwin; do
+            echo "CFLAGS_$t=-mmacosx-version-min=10.15" >> "$GITHUB_ENV"
+            echo "CXXFLAGS_$t=-mmacosx-version-min=10.15" >> "$GITHUB_ENV"
+          done
+          # 前端降到 Safari 13 语法（只影响 macOS 构建，Windows 仍 es2021）
+          echo "VITE_BUILD_TARGET=safari13" >> "$GITHUB_ENV"
+
       - name: install frontend dependencies
         run: npm ci
 
+      # ---------- dry_run：只构建，不发 Release ----------
+      - name: build (dry run)
+        if: github.event.inputs.dry_run == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: npm run tauri build -- ${{ matrix.args }}
+
+      - name: upload artifacts (dry run)
+        if: github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.app.tar.gz*
+            src-tauri/target/**/release/bundle/msi/*.msi
+            src-tauri/target/**/release/bundle/nsis/*.exe
+
+      # ---------- 正式发布 ----------
       - name: build & release
+        if: github.event.inputs.dry_run != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,3 +106,23 @@ jobs:
           releaseBody: '见提交历史'
           releaseDraft: false
           prerelease: false
+
+      # ---------- macOS 产物校验（架构 / 部署目标 / Info.plist）----------
+      - name: verify macOS bundle
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target -name "*.app" -path "*bundle/macos*" | head -1)
+          if [ -z "$APP" ]; then echo "::error::未找到 .app"; exit 1; fi
+          BIN=$(find "$APP/Contents/MacOS" -maxdepth 1 -type f | head -1)
+          echo "── 架构 ──"
+          lipo -archs "$BIN"
+          echo "── minos ──"
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | grep minos || true
+          echo "── Info.plist ──"
+          plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist"
+          ARCHS=$(lipo -archs "$BIN")
+          case "$ARCHS" in
+            *x86_64*arm64*|*arm64*x86_64*) echo "✅ universal" ;;
+            *) echo "::error::产物非 universal：$ARCHS"; exit 1 ;;
+          esac
