@@ -16,6 +16,15 @@ const STATIC_GOODS = [
   { key: 'monthly', goodsId: 8, titleKey: 'mall.monthlyTitle', price: '1.42', featKey: 'mall.feat8', recommend: true },
 ] as const;
 
+// 人民币参考价：硬编码 1 USD = 7 CNY，仅用于展示（不参与下单/结算）
+const USD_TO_CNY = 7;
+
+function cnyRef(usd: string | number): string {
+  const raw = typeof usd === 'number' ? usd : Number.parseFloat(String(usd).replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(raw)) return '';
+  return `≈ ¥${(raw * USD_TO_CNY).toFixed(2)}`;
+}
+
 // 自动激活的订阅套餐 id → 一键购买成功文案 key
 const BUY_PLAN_LABEL: Record<number, string> = {
   2: 'mall.buySub2',
@@ -143,7 +152,10 @@ export default function ShopPage(_props: PageProps) {
               </div>
               <FeatureLines text={t(g.featKey)} />
               <div className="pcard__rw">
-                <span className="pcard__pr">${prices[g.key] ?? g.price}</span>
+                <span className="pcard__pr">
+                  ${prices[g.key] ?? g.price}
+                  <span className="pcard__cny">{cnyRef(prices[g.key] ?? g.price)}</span>
+                </span>
                 <button
                   type="button"
                   className="btn btn-grad"
@@ -165,7 +177,10 @@ export default function ShopPage(_props: PageProps) {
             <div className="pcard__nm">{t('mall.trialTitle')}</div>
             <FeatureLines text={t('mall.trialFeatures')} />
             <div className="pcard__rw">
-              <span className="pcard__pr">{t('mall.trialPrice')}</span>
+              <span className="pcard__pr">
+                {t('mall.trialPrice')}
+                <span className="pcard__cny">{cnyRef(t('mall.trialPrice'))}</span>
+              </span>
               <span className="muted small" style={{ marginLeft: 'auto' }}>{t('mall.trialCta')}</span>
             </div>
           </div>

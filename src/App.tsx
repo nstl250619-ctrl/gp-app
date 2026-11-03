@@ -343,7 +343,10 @@ export default function App() {
         >
           QQ:237525313
         </button>
-        <TurboCard tunnel={tunnel} group={auth?.group ?? null} onStart={startTunnel} onStop={stopTunnel} error={tunnelError} />
+        {/* 直链加速仅对 SVIP 分组可见：非会员不渲染整卡（避免"看得到点不了"的打扰） */}
+        {(auth?.group ?? '') === 'svip' && (
+          <TurboCard tunnel={tunnel} group={auth?.group ?? null} onStart={startTunnel} onStop={stopTunnel} error={tunnelError} />
+        )}
         <nav className="sidebar__nav" style={{ paddingBottom: 'var(--space-3)' }}>{renderNav(BOTTOM_NAV)}</nav>
       </aside>
 
