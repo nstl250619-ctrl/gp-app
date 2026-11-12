@@ -97,7 +97,7 @@ d=json.load(sys.stdin)
 print(' '.join(sorted(a['name'] for a in d.get('assets',[]))))
 ")"
 echo "   release 资产: $LATEST"
-for need in latest.json "GreenPool_${VER}_x64-setup.exe" "GreenPool_aarch64.app.tar.gz"; do
+for need in latest.json "GreenPool_${VER}_x64-setup.exe" "GreenPool_universal.app.tar.gz"; do
   case " $LATEST " in *" $need "*) ;; *) die "缺少资产 $need" ;; esac
 done
 
