@@ -7,11 +7,13 @@
 # 可选环境变量：
 #   SKIP_CHECK=1   跳过 typecheck / cargo check（着急时用）
 #   HTTPS_PROXY    访问 GitHub 的代理，默认 http://127.0.0.1:7890
+#   GP_SSH_HOST    镜像同步用的 SSH 主机，默认 hk-server（直连 22）
+#                  移动热点/被拦截时用 GP_SSH_HOST=hk-tunnel（走 Cloudflare Tunnel）
 #
 # 前提：
 #   - 当前在 main、工作区干净
 #   - 仓库 secret TAURI_SIGNING_PRIVATE_KEY 已配置（CI 用）
-#   - 本机可 ssh hk-server（镜像同步）
+#   - 本机可 ssh ${GP_SSH_HOST:-hk-server}（镜像同步）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +24,8 @@ NOTES="${2:-见提交历史}"
 REPO="nstl250619-ctrl/gp-app"
 PROXY="${HTTPS_PROXY:-http://127.0.0.1:7890}"
 SKIP_CHECK="${SKIP_CHECK:-0}"
+# 镜像同步走哪台 SSH：默认直连 hk-server；热点网络下 22 会被出口拦截，覆盖为 hk-tunnel
+SSH_HOST="${GP_SSH_HOST:-hk-server}"
 TAG="v${VER}"
 
 die() { echo "!! $*" >&2; exit 1; }
@@ -101,7 +105,8 @@ for need in latest.json "GreenPool_${VER}_x64-setup.exe" "GreenPool_universal.ap
   case " $LATEST " in *" $need "*) ;; *) die "缺少资产 $need" ;; esac
 done
 
-ssh -o BatchMode=yes hk-server "bash /opt/gp-mirror-sync.sh ${VER}" | tail -8
+echo "   镜像同步 via $SSH_HOST …"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" "bash /opt/gp-mirror-sync.sh ${VER}" | tail -8
 
 echo "   双通道校验："
 curl -s -x "$PROXY" "https://github.com/${REPO}/releases/download/${TAG}/latest.json" \
