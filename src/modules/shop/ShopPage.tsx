@@ -6,6 +6,7 @@ import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { BuyResult, ShopOrderItem, ShopStatus, WalletSummary } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
+import { isShopCardLinkOn } from '@/utils/shopPrefs';
 import RechargeModal from './RechargeModal';
 
 // 静态可购商品卡：key 为网关下单的稳定标识；price 仅作展示，购买成功后按成交价校准。
@@ -47,6 +48,8 @@ function FeatureLines({ text }: { text: string }) {
 }
 
 export default function ShopPage(_props: PageProps) {
+  // 设置页开关：默认关闭（不跳转），开启后商品卡才可点击进入商城详情
+  const cardLink = isShopCardLinkOn();
   const [shop, setShop] = useState<ShopStatus | null>(null);
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [orders, setOrders] = useState<ShopOrderItem[] | null>(null);
@@ -143,7 +146,11 @@ export default function ShopPage(_props: PageProps) {
 
       <div className="mall-goods">
         {STATIC_GOODS.map((g) => (
-          <div className="pcard pcard--link" key={g.key} onClick={() => openDetail(g.goodsId)}>
+          <div
+            className={`pcard${cardLink ? ' pcard--link' : ''}`}
+            key={g.key}
+            onClick={cardLink ? () => openDetail(g.goodsId) : undefined}
+          >
             <div className="pcard__img"><Ticket size={30} color="var(--accent)" /></div>
             <div className="pcard__bd">
               <div className="pcard__nm">

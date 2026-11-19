@@ -5,12 +5,14 @@ import { errorMessage, invokeCommand, isIpcError } from '@/services/ipc';
 import type { ApplyResult, AvailableModels, DetectResult, InstallPlan, KeyItem } from '@/types/ipc';
 import type { PageProps } from '@/types/page';
 import { t } from '@/i18n';
+import { sortModels } from '@/utils/modelOrder';
 import ModelPicker from './ModelPicker';
 import IdeTabs, { type TabKey, WRITABLE, SINGLE_MODEL } from './IdeTabs';
 
 // ---- selection persistence (localStorage, per import target) ----
 const BASE_URL_KEY = 'gp.baseUrl';
-const BASE_URLS = ['https://api.greenpool.cn', 'https://aigw.greenpool.cn'];
+// 首选项为 aigw（灰云直连，国内更快更稳）；api 作为备选
+const BASE_URLS = ['https://aigw.greenpool.cn', 'https://api.greenpool.cn'];
 const modelsKey = (t: TabKey) => `gp.models.${t}`;
 
 function loadBaseUrl(): string {
@@ -143,7 +145,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
       .catch((e) => setMsg(errorMessage(e)));
     invokeCommand<AvailableModels>('install.availableModels', { target: tab })
       .then((res) => {
-        const list = res.models;
+        const list = sortModels(res.models);
         setModelsOffline(res.offline);
         setAvailable(list);
         if (!modelsDirty.current) {
@@ -163,7 +165,7 @@ export default function ConfigPage({ onNavigate }: PageProps) {
             await invokeCommand('account.setupKey', {});
             invokeCommand<AvailableModels>('install.availableModels', { target: tab })
               .then((res) => {
-                const list = res.models;
+                const list = sortModels(res.models);
                 setModelsOffline(res.offline);
                 setAvailable(list);
                 if (!modelsDirty.current) {
@@ -197,10 +199,11 @@ export default function ConfigPage({ onNavigate }: PageProps) {
     setResult(null);
     try {
       const res = await invokeCommand<AvailableModels>('install.availableModels', { target: tab });
+      const list = sortModels(res.models);
       setModelsOffline(res.offline);
-      setAvailable(res.models);
-      const kept = selectedRef.current.filter((m) => res.models.includes(m));
-      const next = kept.length > 0 ? kept : loadSavedModels(tab, res.models);
+      setAvailable(list);
+      const kept = selectedRef.current.filter((m) => list.includes(m));
+      const next = kept.length > 0 ? kept : loadSavedModels(tab, list);
       selectedRef.current = next;
       setSelected(next);
       saveModels(tab, next);
@@ -395,8 +398,8 @@ export default function ConfigPage({ onNavigate }: PageProps) {
           <div className="config-path-row">
             <span className="tag-pill" style={{ width: 76, justifyContent: 'center' }}>{t('config.rowService')}</span>
             <select className="input" style={{ flex: 1 }} value={baseUrl} onChange={(e) => changeUrl(e.target.value)}>
-              <option value="https://api.greenpool.cn">https://api.greenpool.cn</option>
               <option value="https://aigw.greenpool.cn">https://aigw.greenpool.cn</option>
+              <option value="https://api.greenpool.cn">https://api.greenpool.cn</option>
             </select>
           </div>
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage, invokeCommand } from '@/services/ipc';
 import type { AppStatus, InstanceCapability } from '@/types/ipc';
 import { t } from '@/i18n';
+import { isShopCardLinkOn, setShopCardLink } from '@/utils/shopPrefs';
 import { checkForUpdate, downloadAndInstall, isAutoUpdateOn, setAutoUpdate } from '@/utils/updater';
 
 type UpdUi = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading';
@@ -13,6 +14,7 @@ export default function SettingsPage() {
   const [inst, setInst] = useState<InstanceCapability | null>(null);
   const [version, setVersion] = useState('');
   const [auto, setAuto] = useState(false);
+  const [cardLink, setCardLink] = useState(false);
   const [updState, setUpdState] = useState<UpdUi>('idle');
   const [updVer, setUpdVer] = useState('');
   const [updErr, setUpdErr] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export default function SettingsPage() {
   useEffect(() => {
     refresh();
     setAuto(isAutoUpdateOn());
+    setCardLink(isShopCardLinkOn());
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion().then(setVersion).catch(() => {}));
   }, [refresh]);
 
@@ -38,6 +41,12 @@ export default function SettingsPage() {
     const next = !auto;
     setAuto(next);
     setAutoUpdate(next);
+  };
+
+  const toggleCardLink = () => {
+    const next = !cardLink;
+    setCardLink(next);
+    setShopCardLink(next);
   };
 
   // 手动检查更新：有新版本 → 按钮变「立即更新 vX.X.X」；无 → 短暂显示「已是最新版本」
@@ -126,6 +135,17 @@ export default function SettingsPage() {
               <span className="toggle__thumb" />
             </span>
           </button>
+        </div>
+        <div className="record-row">
+          <span className="muted">{t('settings.shopCardLink')}</span>
+          <button type="button" className="toggle" role="switch" aria-checked={cardLink} onClick={toggleCardLink}>
+            <span className={`toggle__track ${cardLink ? 'toggle__track--on' : ''}`}>
+              <span className="toggle__thumb" />
+            </span>
+          </button>
+        </div>
+        <div className="record-row" style={{ marginTop: -6 }}>
+          <span className="muted small">{t('settings.shopCardLinkHint')}</span>
         </div>
         <div className="record-row">
           <span className="muted">{t('settings.currentVersion')}</span>

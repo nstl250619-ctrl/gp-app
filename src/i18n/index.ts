@@ -298,6 +298,8 @@ export const zh = {
     autoUpdate: '自动检测更新',
     autoUpdateOn: '开启：启动时自动检测，发现新版本会提示你确认后更新',
     autoUpdateOff: '关闭：不自动检测，仅在手动检查时提示',
+    shopCardLink: '商品卡跳转商城详情',
+    shopCardLinkHint: '默认关闭；开启后点击商城商品卡会打开网页版详情页',
     currentVersion: '当前版本',
     checkLatest: '检查最新版本',
     checkUpdate: '检查更新',
