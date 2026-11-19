@@ -27,8 +27,9 @@ jobs:
           # Windows：保持 msi + nsis 不变，前端 target 仍是 es2021
           - platform: windows-latest
             args: '--bundles msi,nsis'
-          # macOS：pin 住 runner（避免 Xcode 漂到 27 导致 10.15 无法编译）+ universal 双架构
-          - platform: macos-14
+          # macOS：macos-14 已被 GitHub 下线（报 configuration ... not supported），改用 macos-15；
+          # 仍保留 Xcode < 27 断言，防止 Xcode 27 无法编译 macOS 10.15 部署目标
+          - platform: macos-15
             args: '--target universal-apple-darwin --bundles app,dmg'
     runs-on: ${{ matrix.platform }}
 
