@@ -52,6 +52,31 @@ impl ClaudeAdapter {
     fn env_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
         v.get("env").and_then(|e| e.get(key)).and_then(|x| x.as_str())
     }
+
+    /// 回读校验：三个值必须与本次写入**逐一相等**。
+    /// 只验「键存在」会在「写入失败但旧值还在」时误判成功（假成功）。
+    fn verify_written(parsed: &Value, model_id: &str, input: &WriteInput) -> bool {
+        parsed.get("model").and_then(|m| m.as_str()) == Some(model_id)
+            && Self::env_field(parsed, ENV_BASE_URL) == Some(input.base_url.as_str())
+            && Self::env_field(parsed, ENV_API_KEY) == Some(input.api_key.as_str())
+    }
+
+    /// 写入或校验失败时的收尾：有还原点就用它把文件恢复成写入前的样子，并把结果写进错误消息。
+    /// 返回的是可直接展示给人看的后缀说明；还原失败时把备份路径一并给出，便于人工恢复。
+    fn settle_failure(&self, backup: &Option<PathBuf>, path: &Path, reason: &str) -> String {
+        match backup {
+            Some(bak) => match super::ConfigAdapter::rollback(self, bak, path) {
+                Ok(()) => format!("{}，已自动还原为写入前配置", reason),
+                Err(e) => format!(
+                    "{}，且自动还原失败（备份：{}）：{}",
+                    reason,
+                    bak.display(),
+                    e
+                ),
+            },
+            None => format!("{}（无可用还原点，请重试）", reason),
+        }
+    }
 }
 
 impl Default for ClaudeAdapter {
@@ -155,6 +180,12 @@ impl super::ConfigAdapter for ClaudeAdapter {
         custom_path: Option<&Path>,
     ) -> AppResult<ApplyResult> {
         let path = self.existing_path(custom_path).ok_or(AppError::TargetNotFound)?;
+
+        // ① 全部只读体检前置：任一项不通过都直接返回，磁盘上不多出任何文件（失败不留孤儿备份）。
+        let model_id = seeds
+            .first()
+            .map(|s| s.id.clone())
+            .ok_or_else(|| AppError::Other("未选择模型".into()))?;
         if let Some(parent) = path.parent() {
             if !parent.exists() {
                 return Err(AppError::TargetNotFound); // 禁止静默创建目录（§11.1）
@@ -164,50 +195,60 @@ impl super::ConfigAdapter for ClaudeAdapter {
         let raw = fs_atomic::read_string(&path)?;
         let mut v: Value =
             serde_json::from_str(&raw).map_err(|e| AppError::Other(format!("settings.json 无法解析：{}", e)))?;
+        if !v.is_object() {
+            return Err(AppError::Other("settings.json 顶层必须是对象".into()));
+        }
+        if let Some(env) = v.get("env") {
+            if !env.is_object() {
+                return Err(AppError::Other("settings.json 的 env 必须是对象".into()));
+            }
+        }
 
-        // 已是 GP 托管态时不新建备份：还原点必须是「GP 介入前」的原始配置（链式备份防护）。
-        let backup = if !Self::is_managed(&v) { Some(fs_atomic::backup(&path)?) } else { None };
+        // ② 体检通过后才留还原点：已是 GP 托管态不新建备份（链式备份防护）。
+        let managed = Self::is_managed(&v);
+        let backup = if managed { None } else { Some(fs_atomic::backup(&path)?) };
 
-        let model_id = seeds
-            .first()
-            .map(|s| s.id.clone())
-            .ok_or_else(|| AppError::Other("未选择模型".into()))?;
-
-        let obj = v
-            .as_object_mut()
-            .ok_or_else(|| AppError::Other("settings.json 顶层必须是对象".into()))?;
+        // ③ 至此才修改内存并落盘
+        let obj = v.as_object_mut().expect("顶层对象已在 ① 校验");
         obj.insert("model".into(), Value::String(model_id.clone()));
 
         // env 深合并：只覆盖两个托管键，用户其他环境变量原样保留
         let env = obj
             .entry("env")
             .or_insert_with(|| Value::Object(Default::default()));
-        if !env.is_object() {
-            return Err(AppError::Other("settings.json 的 env 必须是对象".into()));
-        }
-        let env_obj = env.as_object_mut().expect("checked above");
+        let env_obj = env.as_object_mut().expect("env 对象已在 ① 校验");
         env_obj.insert(ENV_BASE_URL.into(), Value::String(input.base_url.clone()));
         env_obj.insert(ENV_API_KEY.into(), Value::String(input.api_key.clone()));
 
         let content = serde_json::to_string_pretty(&v)?;
-        fs_atomic::atomic_write(&path, &content)?;
+        if let Err(e) = fs_atomic::atomic_write(&path, &content) {
+            // 写盘失败时目标文件可能已被删除/截断，必须用还原点救回来，不能留半坏状态。
+            return Err(AppError::Other(self.settle_failure(
+                &backup,
+                &path,
+                &format!("写入失败：{}", e),
+            )));
+        }
 
-        // 回读校验：解析通过 + 托管键在位 + env 长度不减
+        // 回读校验：回读出来的值必须与本次写入逐一相等（不是「键存在」就算过）。
         let back = fs_atomic::read_string(&path)?;
         let parsed: Value = serde_json::from_str(&back)?;
-        let verify_ok = parsed.get("model").and_then(|m| m.as_str()) == Some(model_id.as_str())
-            && Self::env_field(&parsed, ENV_BASE_URL).is_some()
-            && Self::env_field(&parsed, ENV_API_KEY).is_some()
-            && parsed.get("env").map(|e| e.as_object().map(|o| o.len()).unwrap_or(0)).unwrap_or(0) >= 2;
+        if !Self::verify_written(&parsed, &model_id, input) {
+            return Err(AppError::VerifyFailed(self.settle_failure(
+                &backup,
+                &path,
+                "回读内容与预期不一致",
+            )));
+        }
 
         Ok(ApplyResult {
             extra_backups: Vec::new(),
-            status: if verify_ok { "applied".into() } else { "failed".into() },
+            status: "applied".into(),
             path: path.display().to_string(),
             backup_path: backup.map(|b| b.display().to_string()),
-            verify_ok,
+            verify_ok: true,
             requires_restart: false,
-            message: if verify_ok { "已写入".into() } else { "写入校验未通过".into() },
+            message: "已写入".into(),
         })
     }
 
@@ -236,6 +277,7 @@ impl super::ConfigAdapter for ClaudeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::ConfigAdapter;
     use serde_json::json;
 
     #[test]
@@ -260,5 +302,159 @@ mod tests {
         assert_eq!(v["env"]["HTTP_PROXY"], "http://127.0.0.1:7890"); // 用户 env 保留
         assert_eq!(v["alwaysThinkingEnabled"], true); // 其他顶层键保留
         assert!(ClaudeAdapter::is_managed(&v));
+    }
+
+    fn seed(id: &str) -> ModelSeed {
+        ModelSeed {
+            id: id.into(),
+            supports_tool_call: true,
+            supports_images: false,
+            supports_reasoning: true,
+        }
+    }
+
+    fn input() -> WriteInput {
+        WriteInput {
+            base_url: "https://aigw.greenpool.cn".into(),
+            api_key: "sk-gp".into(),
+            model_ids: vec!["deepseek-v4-pro".into()],
+        }
+    }
+
+    /// 体检失败分支：目录里不能多出任何文件（孤儿备份），原文件也必须一字未改。
+    #[test]
+    fn failed_validation_leaves_no_backup() {
+        let cases: [(&str, &str, Vec<ModelSeed>); 3] = [
+            (r#"{"model":"claude-sonnet","env":"oops"}"#, "env 必须是对象", vec![seed("m1")]),
+            (r#"["not","an","object"]"#, "顶层必须是对象", vec![seed("m1")]),
+            (r#"{"model":"claude-sonnet"}"#, "未选择模型", Vec::new()),
+        ];
+
+        for (original, expect_msg, seeds) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, original).unwrap();
+
+            let err = ClaudeAdapter::new()
+                .apply(&input(), &seeds, Some(&path))
+                .expect_err("校验不通过必须返回错误");
+            assert!(
+                err.to_string().contains(expect_msg),
+                "错误消息应包含 `{}`，实际：{}",
+                expect_msg,
+                err
+            );
+
+            let extra: Vec<String> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n != "settings.json")
+                .collect();
+            assert!(extra.is_empty(), "失败分支不应留下文件，实际多出：{:?}", extra);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "失败后原文件不能变");
+        }
+    }
+
+    /// 成功分支：留还原点、两个托管键写入、用户键全部保留。
+    #[test]
+    fn apply_creates_backup_and_preserves_user_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "model": "claude-sonnet",
+                "env": { "HTTP_PROXY": "http://127.0.0.1:7890" },
+                "alwaysThinkingEnabled": true,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let res = ClaudeAdapter::new()
+            .apply(&input(), &[seed("deepseek-v4-pro")], Some(&path))
+            .expect("正常写入不应失败");
+
+        assert_eq!(res.status, "applied");
+        assert!(res.verify_ok);
+        assert!(res.backup_path.is_some(), "首次接管必须留还原点");
+
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["model"], "deepseek-v4-pro");
+        assert_eq!(v["env"][ENV_BASE_URL], "https://aigw.greenpool.cn");
+        assert_eq!(v["env"][ENV_API_KEY], "sk-gp");
+        assert_eq!(v["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
+        assert_eq!(v["alwaysThinkingEnabled"], true);
+        assert!(ClaudeAdapter::is_managed(&v));
+    }
+
+    /// 已是托管态再写：不再链式生成新备份（还原点始终是「GP 介入前」的原始配置）。
+    #[test]
+    fn reapply_when_managed_does_not_chain_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"env":{"ANTHROPIC_BASE_URL":"https://aigw.greenpool.cn"}}"#).unwrap();
+
+        let res = ClaudeAdapter::new()
+            .apply(&input(), &[seed("deepseek-v4-pro")], Some(&path))
+            .expect("托管态写入不应失败");
+
+        assert!(res.verify_ok);
+        assert!(res.backup_path.is_none(), "托管态不应新建备份");
+    }
+
+    /// 第 1 项：回读校验必须比值，键存在但值还是旧的必须判失败。
+    #[test]
+    fn verify_rejects_old_value_even_if_key_present() {
+        let inp = input();
+
+        let good = json!({
+            "model": "deepseek-v4-pro",
+            "env": { "ANTHROPIC_BASE_URL": "https://aigw.greenpool.cn", "ANTHROPIC_API_KEY": "sk-gp" }
+        });
+        assert!(ClaudeAdapter::verify_written(&good, "deepseek-v4-pro", &inp));
+
+        // 三个键都在，但 base_url 还是旧地址 —— 旧实现只看 is_some()，会误判成成功
+        let stale = json!({
+            "model": "deepseek-v4-pro",
+            "env": { "ANTHROPIC_BASE_URL": "https://old.example.com", "ANTHROPIC_API_KEY": "sk-gp" }
+        });
+        assert!(!ClaudeAdapter::verify_written(&stale, "deepseek-v4-pro", &inp));
+
+        // 密钥根本没写进去
+        let no_key = json!({
+            "model": "deepseek-v4-pro",
+            "env": { "ANTHROPIC_BASE_URL": "https://aigw.greenpool.cn" }
+        });
+        assert!(!ClaudeAdapter::verify_written(&no_key, "deepseek-v4-pro", &inp));
+    }
+
+    /// 第 2 项：失败收尾必须把文件还原成写入前的样子，并保留备份供人工复核。
+    #[test]
+    fn settle_failure_restores_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let original = r#"{"model":"claude-sonnet","env":{"HTTP_PROXY":"http://127.0.0.1:7890"}}"#;
+        std::fs::write(&path, original).unwrap();
+        let bak = fs_atomic::backup(&path).unwrap();
+        std::fs::write(&path, r#"{"model":"half-written"}"#).unwrap(); // 模拟写坏
+
+        let msg = ClaudeAdapter::new().settle_failure(&Some(bak.clone()), &path, "回读内容与预期不一致");
+
+        assert!(msg.contains("已自动还原"), "消息应说明已还原：{}", msg);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "文件必须回到写入前内容");
+        assert!(bak.exists(), "备份要留着供人工复核");
+    }
+
+    #[test]
+    fn settle_failure_without_backup_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        let msg = ClaudeAdapter::new().settle_failure(&None, &path, "写入失败：磁盘已满");
+
+        assert!(msg.contains("无可用还原点"), "实际：{}", msg);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}", "无备份时不要动文件");
     }
 }
