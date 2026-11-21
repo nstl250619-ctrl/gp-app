@@ -53,8 +53,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "── Xcode ──"
-          xcodebuild -version
-          XCODE_VER=$(xcodebuild -version | head -1 | awk '{print $2}')
+          # 先完整捕获输出再解析：直接 `xcodebuild -version | head -1` 会让 xcodebuild
+          # 在管道关闭后写 stdout 触发 SIGPIPE（NSFileHandleOperationException，exit 134）。
+          XCODE_OUT="$(xcodebuild -version 2>&1)"
+          printf '%s\n' "$XCODE_OUT"
+          XCODE_VER="$(printf '%s\n' "$XCODE_OUT" | sed -n '1s/^Xcode[[:space:]]*//p')"
+          [[ -n "$XCODE_VER" ]] || { echo "::error::无法解析 Xcode 版本"; exit 1; }
           XCODE_MAJOR=${XCODE_VER%%.*}
           if [ "$XCODE_MAJOR" -ge 27 ]; then
             echo "::error::Xcode $XCODE_VER 已不支持 macOS 10.15 部署目标，请 pin 更旧的 runner"
