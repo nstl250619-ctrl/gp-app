@@ -30,6 +30,9 @@ const DISPLAY_NAME: &str = "GP:";
 const CRED_KEY: &str = "GREENPOOL_API_KEY";
 const MODEL_CONTEXT_WINDOW: u64 = 1_000_000;
 const MODEL_MAX_TOKENS: u64 = 32_000;
+/// 单张图片上限 4 MiB / 像素预算 8M（与 DSH 官方配置对齐，否则图片会被 pi-ai 丢弃）
+const IMAGE_MAX_BYTES: u64 = 4_194_304;
+const IMAGE_PIXEL_BUDGET: u64 = 8_388_608;
 
 pub struct DshAdapter {
     candidates: fn() -> Vec<PathBuf>,
@@ -150,13 +153,31 @@ impl DshAdapter {
     }
 
     /// 按 ModelSeed 构造 pi-ai 模型条目。
+    /// 能力字段与 DSH 官方配置一致：`input` 决定能否发图，`reasoningEfforts` 决定思考档位是否出现；
+    /// 缺任一项，DSH 设置页就只剩「文本」、也没有推理等级开关。
     fn model_entry(seed: &ModelSeed) -> Value {
-        json!({
+        let input = if seed.supports_images {
+            json!(["text", "image"])
+        } else {
+            json!(["text"])
+        };
+        let mut entry = json!({
             "id": seed.id,
             "name": seed.id,
             "contextWindow": MODEL_CONTEXT_WINDOW,
             "maxTokens": MODEL_MAX_TOKENS,
-        })
+            "input": input,
+        });
+        if seed.supports_reasoning {
+            // 档位映射：键=DSH 展示名，值=传给网关的 reasoning_effort
+            entry["reasoningEfforts"] = json!({
+                "max": "max",
+                "low": "low",
+                "medium": "medium",
+                "high": "high",
+            });
+        }
+        entry
     }
 
     fn provider_entry(input: &WriteInput, seeds: &[ModelSeed]) -> Value {
@@ -166,7 +187,15 @@ impl DshAdapter {
             "apiKeyEnv": CRED_KEY,
             "api": "openai-completions",
             "baseURL": format!("{}/v1", input.base_url), // 必须带 /v1（SPA fallback 根因）
+            "requestImageMaxBytes": IMAGE_MAX_BYTES,
+            "requestImagePixelBudget": IMAGE_PIXEL_BUDGET,
             "models": models,
+            "compat": {
+                "supportsDeveloperRole": false,
+                "supportsStore": false,
+                "maxTokensField": "max_tokens",
+                "requiresReasoningContentOnAssistantMessages": true,
+            },
         })
     }
 }
@@ -337,7 +366,10 @@ impl super::ConfigAdapter for DshAdapter {
             let obj = entry
                 .as_object_mut()
                 .ok_or_else(|| AppError::Other("patch 条目必须是映射".into()))?;
-            obj.insert("config".into(), json!({ "provider": PROVIDER_ID, "model": model_id }));
+            obj.insert(
+                "config".into(),
+                json!({ "provider": PROVIDER_ID, "model": model_id, "reasoningEffort": "max" }),
+            );
         }
 
         let content = serde_yaml::to_string(&items)
@@ -489,6 +521,34 @@ mod tests {
         assert_eq!(e["apiKeyEnv"], "GREENPOOL_API_KEY");
         assert_eq!(e["api"], "openai-completions");
         assert_eq!(e["models"][0]["id"], "glm-5.3");
+    }
+
+    /// 回归锁：模型条目必须带 input（含 image）与 reasoningEfforts，
+    /// 否则 DSH 设置页看不到「图片」输入类型与推理等级开关。
+    #[test]
+    fn model_entry_enables_image_and_reasoning() {
+        let e = DshAdapter::provider_entry(&input(), &[seed("deepseek-v4.1-flash")]);
+        let m = &e["models"][0];
+        assert_eq!(m["input"], json!(["text", "image"]));
+        assert_eq!(m["reasoningEfforts"]["max"], "max");
+        assert_eq!(m["reasoningEfforts"]["high"], "high");
+        assert_eq!(e["requestImageMaxBytes"], IMAGE_MAX_BYTES);
+        assert_eq!(e["requestImagePixelBudget"], IMAGE_PIXEL_BUDGET);
+        assert_eq!(e["compat"]["maxTokensField"], "max_tokens");
+    }
+
+    #[test]
+    fn model_entry_respects_capability_flags() {
+        let plain = ModelSeed {
+            id: "text-only".into(),
+            supports_tool_call: true,
+            supports_images: false,
+            supports_reasoning: false,
+        };
+        let e = DshAdapter::provider_entry(&input(), &[plain]);
+        let m = &e["models"][0];
+        assert_eq!(m["input"], json!(["text"]));
+        assert!(m.get("reasoningEfforts").is_none());
     }
 
     #[test]
